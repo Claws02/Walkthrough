@@ -1,7 +1,9 @@
 // CaptureViewModel.swift
 // ScanCapture
 //
-// Orchestrates the capture pipeline: ARKit session → ZIP → server upload.
+// Orchestrates the capture pipeline: ARKit session → ZIP → two-step server upload.
+// Step 1: POST /api/jobs  (creates job record)
+// Step 2: POST /api/jobs/{id}/upload  (streams ZIP)
 
 import Foundation
 import Observation
@@ -59,13 +61,13 @@ final class CaptureViewModel {
         captureManager.startSession()
 
         let fm = FileManager.default
-        let caches    = fm.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        let timestamp = Int(Date().timeIntervalSince1970)
+        let caches     = fm.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let timestamp  = Int(Date().timeIntervalSince1970)
         let captureDir = caches.appendingPathComponent("capture_\(timestamp)")
         try? fm.createDirectory(at: captureDir, withIntermediateDirectories: true)
 
         captureManager.startRecording(outputDir: captureDir)
-        state = .capturing
+        state        = .capturing
         errorMessage = nil
     }
 
@@ -78,39 +80,45 @@ final class CaptureViewModel {
             return
         }
 
-        state = .uploading
+        state          = .uploading
         uploadProgress = 0.0
 
         do {
-            // 1. Compress capture directory.
+            // 1. Zip the capture directory.
             let zipURL = try await captureManager.compressCapture(captureDir: captureDir)
 
-            // 2. Upload ZIP — server creates job + starts processing in one request.
-            let job = try await apiClient.uploadScan(zipURL: zipURL) { [weak self] fraction in
+            // 2. Create a job record on the server (POST /api/jobs).
+            let newJob = try await apiClient.createJob()
+            currentJobId = newJob.id
+
+            // 3. Upload the ZIP to the server (POST /api/jobs/{id}/upload).
+            try await apiClient.uploadCapture(
+                jobId: newJob.id,
+                zipURL: zipURL
+            ) { [weak self] fraction in
                 Task { @MainActor [weak self] in
                     self?.uploadProgress = fraction
                 }
             }
-            currentJobId = job.id
 
-            // 4. Clean up local files.
+            // 4. Remove local files now that the server has them.
             try? FileManager.default.removeItem(at: captureDir)
             try? FileManager.default.removeItem(at: zipURL)
 
-            state = .complete
+            state          = .complete
             uploadProgress = 1.0
 
         } catch {
             errorMessage = error.localizedDescription
-            state = .idle
+            state        = .idle
         }
     }
 
     func resetToIdle() {
-        state = .idle
+        state          = .idle
         uploadProgress = 0.0
-        errorMessage = nil
-        currentJobId = nil
+        errorMessage   = nil
+        currentJobId   = nil
         captureManager.stopSession()
     }
 }

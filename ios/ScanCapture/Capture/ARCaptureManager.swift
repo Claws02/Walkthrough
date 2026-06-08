@@ -145,44 +145,43 @@ final class ARCaptureManager: NSObject {
         }.value
     }
 
-    // MARK: - Frame capture (called from ARSessionDelegate on background queue)
+    // MARK: - Frame capture
 
-    private nonisolated func captureFrame(_ frame: ARFrame, outputDir: URL, captureDepth: Bool, enableDepthViz: Bool) -> CaptureFrame? {
-        let ciContext = CIContext()
+    /// Saves a single ARFrame to disk.
+    /// `frameIndex` is supplied by the MainActor caller from `capturedFrames.count`
+    /// so there is no race condition on the index.
+    private nonisolated func captureFrame(
+        _ frame: ARFrame,
+        outputDir: URL,
+        frameIndex: Int,
+        captureDepth: Bool
+    ) -> CaptureFrame? {
+        let ciContext   = CIContext()
         let pixelBuffer = frame.capturedImage
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let ciImage     = CIImage(cvPixelBuffer: pixelBuffer)
 
-        // Determine next index by inspecting images dir.
-        let imagesDir = outputDir.appendingPathComponent("images")
-        let existingCount = (try? FileManager.default.contentsOfDirectory(atPath: imagesDir.path))?.count ?? 0
-        let paddedIdx = String(format: "%04d", existingCount)
-        let imageFilename = "frame_\(paddedIdx).jpg"
-        let relImagePath = "images/\(imageFilename)"
-        let imageURL = outputDir.appendingPathComponent(relImagePath)
+        let paddedIdx    = String(format: "%04d", frameIndex)
+        let relImagePath = "images/frame_\(paddedIdx).jpg"
+        let imageURL     = outputDir.appendingPathComponent(relImagePath)
 
         if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
-            let uiImage = UIImage(cgImage: cgImage)
-            if let data = uiImage.jpegData(compressionQuality: 0.85) {
+            if let data = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.85) {
                 try? data.write(to: imageURL)
             }
         }
 
-        // Depth map
+        // Optional depth map.
         var relDepthPath: String? = nil
         if captureDepth,
            let depthMap = frame.sceneDepth?.depthMap ?? frame.smoothedSceneDepth?.depthMap {
-            let depthFilename = "frame_\(paddedIdx).png"
-            relDepthPath = "depth/\(depthFilename)"
-            let depthURL = outputDir.appendingPathComponent(relDepthPath!)
-            saveDepthMap(depthMap, to: depthURL)
+            relDepthPath = "depth/frame_\(paddedIdx).png"
+            saveDepthMap(depthMap, to: outputDir.appendingPathComponent(relDepthPath!))
         }
-
-        let matrix = frame.camera.transform.toNerfstudioTransform()
 
         return CaptureFrame(
             timestamp: frame.timestamp,
             imagePath: relImagePath,
-            transformMatrix: matrix,
+            transformMatrix: frame.camera.transform.toNerfstudioTransform(),
             depthMapPath: relDepthPath
         )
     }
@@ -356,7 +355,8 @@ extension ARCaptureManager: ARSessionDelegate {
                 imageHeight = CVPixelBufferGetHeight(frame.capturedImage)
             }
 
-            // Save frame data on a background thread to avoid blocking ARKit.
+            // Determine the next frame index now (on MainActor) to avoid any race.
+            let frameIndex     = capturedFrames.count
             let captureDepth   = settings.enableLiDAR
             let enableDepthViz = settings.enableDepthVisualization
             let depthMapOpt    = frame.sceneDepth?.depthMap ?? frame.smoothedSceneDepth?.depthMap
@@ -366,16 +366,16 @@ extension ARCaptureManager: ARSessionDelegate {
                 if let captured = self.captureFrame(
                     frame,
                     outputDir: dir,
-                    captureDepth: captureDepth,
-                    enableDepthViz: enableDepthViz
+                    frameIndex: frameIndex,
+                    captureDepth: captureDepth
                 ) {
                     await MainActor.run {
                         self.capturedFrames.append(captured)
-                        self.frameCount = self.capturedFrames.count
+                        self.frameCount      = self.capturedFrames.count
                         self.captureProgress = "Recording – \(self.capturedFrames.count) frames"
                     }
                 }
-                // Update depth preview if enabled
+                // Update depth preview if enabled.
                 if enableDepthViz, let dm = depthMapOpt {
                     let img = self.depthMapAsUIImage(dm)
                     await MainActor.run { self.currentDepthImage = img }

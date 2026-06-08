@@ -5,7 +5,7 @@ import os
 import shutil
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -68,82 +68,134 @@ def _publish_task(job_id: str, upload_path: str) -> None:
     "",
     response_model=JobResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new reconstruction job",
+    summary="Create a job record (optionally with immediate file upload)",
+    description=(
+        "If a `file` field is provided in the multipart body the scan is uploaded "
+        "immediately and processing starts. If no file is provided a bare job record "
+        "is created so the client can upload the file later via "
+        "POST /api/jobs/{job_id}/upload."
+    ),
 )
 async def create_job(
+    file: Optional[UploadFile] = File(None, description="ZIP archive (optional)"),
+    db: AsyncSession = Depends(get_db),
+) -> JobResponse:
+    job_id = str(uuid.uuid4())
+
+    # ------------------------------------------------------------------
+    # Persist job record first (so the client gets an ID immediately)
+    # ------------------------------------------------------------------
+    job = Job(
+        id=job_id,
+        status=JobStatus.pending.value,
+        progress=0.0,
+    )
+    db.add(job)
+    await db.flush()
+
+    if file is not None and file.filename:
+        # Inline upload path — same logic as POST /api/jobs/{id}/upload
+        upload_job_dir = Path(settings.UPLOAD_DIR) / job_id
+        upload_job_dir.mkdir(parents=True, exist_ok=True)
+        original_filename = Path(file.filename or "scan.zip").name
+        dest_path = upload_job_dir / original_filename
+
+        max_bytes = settings.max_upload_size_bytes
+        bytes_written = 0
+        try:
+            async with aiofiles.open(dest_path, "wb") as out_file:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    bytes_written += len(chunk)
+                    if bytes_written > max_bytes:
+                        raise HTTPException(
+                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail=f"Upload exceeds maximum of {settings.MAX_UPLOAD_SIZE_MB} MB.",
+                        )
+                    await out_file.write(chunk)
+        except HTTPException:
+            shutil.rmtree(upload_job_dir, ignore_errors=True)
+            raise
+        except Exception as exc:
+            shutil.rmtree(upload_job_dir, ignore_errors=True)
+            logger.exception("Failed to save uploaded file for job %s", job_id)
+            raise HTTPException(status_code=500, detail="Failed to save uploaded file.") from exc
+
+        job.upload_path = str(dest_path)
+        await db.flush()
+        try:
+            _publish_task(job_id, str(dest_path))
+        except Exception as exc:
+            logger.exception("Failed to enqueue task for job %s", job_id)
+            job.status = JobStatus.failed.value
+            job.message = "Failed to enqueue processing task."
+            await db.flush()
+
+        logger.info("Created job %s with inline upload (%d bytes)", job_id, bytes_written)
+    else:
+        logger.info("Created bare job %s (awaiting upload)", job_id)
+
+    return JobResponse.from_orm_job(job)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/jobs/{job_id}/upload  — separate upload step
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{job_id}/upload",
+    response_model=JobResponse,
+    summary="Upload scan data for an existing job and start processing",
+)
+async def upload_scan(
+    job_id: str,
     file: UploadFile = File(..., description="ZIP archive of iPhone ARKit scan data"),
     db: AsyncSession = Depends(get_db),
 ) -> JobResponse:
-    # ------------------------------------------------------------------
-    # Basic validation
-    # ------------------------------------------------------------------
-    if file.content_type not in (
-        "application/zip",
-        "application/x-zip-compressed",
-        "application/octet-stream",
-        "multipart/form-data",
-    ) and not (file.filename or "").lower().endswith(".zip"):
+    job = await _get_job_or_404(job_id, db)
+
+    if job.status not in (JobStatus.pending.value,):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Uploaded file must be a ZIP archive.",
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Job {job_id} cannot accept an upload in status '{job.status}'.",
         )
 
-    job_id = str(uuid.uuid4())
+    if not (file.filename or "").lower().endswith(".zip") and file.content_type not in (
+        "application/zip", "application/x-zip-compressed", "application/octet-stream",
+    ):
+        raise HTTPException(status_code=422, detail="Uploaded file must be a ZIP archive.")
+
     upload_job_dir = Path(settings.UPLOAD_DIR) / job_id
     upload_job_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = upload_job_dir / Path(file.filename or "scan.zip").name
 
-    # Sanitise filename
-    original_filename = Path(file.filename or "scan.zip").name
-    dest_path = upload_job_dir / original_filename
-
-    # ------------------------------------------------------------------
-    # Stream file to disk with size guard
-    # ------------------------------------------------------------------
     max_bytes = settings.max_upload_size_bytes
     bytes_written = 0
-
     try:
         async with aiofiles.open(dest_path, "wb") as out_file:
             while True:
-                chunk = await file.read(1024 * 1024)  # 1 MiB chunks
+                chunk = await file.read(1024 * 1024)
                 if not chunk:
                     break
                 bytes_written += len(chunk)
                 if bytes_written > max_bytes:
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=(
-                            f"Upload exceeds maximum allowed size of "
-                            f"{settings.MAX_UPLOAD_SIZE_MB} MB."
-                        ),
+                        detail=f"Upload exceeds maximum of {settings.MAX_UPLOAD_SIZE_MB} MB.",
                     )
                 await out_file.write(chunk)
     except HTTPException:
-        shutil.rmtree(upload_job_dir, ignore_errors=True)
         raise
     except Exception as exc:
-        shutil.rmtree(upload_job_dir, ignore_errors=True)
-        logger.exception("Failed to save uploaded file for job %s", job_id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save uploaded file.",
-        ) from exc
+        logger.exception("Failed to save file for job %s", job_id)
+        raise HTTPException(status_code=500, detail="Failed to save uploaded file.") from exc
 
-    # ------------------------------------------------------------------
-    # Persist job record
-    # ------------------------------------------------------------------
-    job = Job(
-        id=job_id,
-        status=JobStatus.pending.value,
-        progress=0.0,
-        upload_path=str(dest_path),
-    )
-    db.add(job)
-    await db.flush()  # get DB-generated defaults (created_at etc.) without committing
+    job.upload_path = str(dest_path)
+    await db.flush()
 
-    # ------------------------------------------------------------------
-    # Enqueue Celery task
-    # ------------------------------------------------------------------
     try:
         _publish_task(job_id, str(dest_path))
     except Exception as exc:
@@ -152,7 +204,7 @@ async def create_job(
         job.message = "Failed to enqueue processing task."
         await db.flush()
 
-    logger.info("Created job %s (%d bytes written)", job_id, bytes_written)
+    logger.info("Upload complete for job %s (%d bytes)", job_id, bytes_written)
     return JobResponse.from_orm_job(job)
 
 
