@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/0"
     UPLOAD_DIR: str = "/data/uploads"
     RESULTS_DIR: str = "/data/results"
-    MAX_UPLOAD_SIZE_MB: int = 500
+    MAX_UPLOAD_SIZE_MB: int = 1024
     CORS_ORIGINS: List[str] = ["*"]
 
     VERSION: str = "1.0.0"

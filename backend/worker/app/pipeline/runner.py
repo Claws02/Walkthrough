@@ -28,7 +28,7 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
-from . import colmap_runner, nerfstudio_runner
+from . import colmap_runner, nerfstudio_runner, video_processor
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,7 @@ def run_pipeline(
             work_dir=work_dir,
             result_dir=result_dir,
             update_progress=update_progress,
+            is_video=video_processor.is_video_file(upload_path_obj),
         )
     finally:
         # Clean up the working directory regardless of success / failure to
@@ -113,35 +114,49 @@ def _run(
     work_dir: Path,
     result_dir: Path,
     update_progress: Callable[[float, str], None],
+    is_video: bool = False,
 ) -> str:
-    # ------------------------------------------------------------------
-    # Step 1 – Extract ZIP
-    # ------------------------------------------------------------------
-    update_progress(0.02, "Extracting archive")
     extract_dir = work_dir / "extract"
     extract_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("[job %s] Extracting %s → %s", job_id, upload_path, extract_dir)
-    try:
-        with zipfile.ZipFile(upload_path, "r") as zf:
-            zf.extractall(extract_dir)
-    except zipfile.BadZipFile as exc:
-        raise RuntimeError(f"Uploaded file is not a valid ZIP archive: {exc}") from exc
-
-    # ------------------------------------------------------------------
-    # Step 2 – Find images directory
-    # ------------------------------------------------------------------
-    update_progress(0.05, "Locating image frames")
-    images_dir = _find_images_dir(extract_dir)
-    logger.info("[job %s] Images directory: %s", job_id, images_dir)
-
-    frame_count = _count_images(images_dir)
-    logger.info("[job %s] Frame count: %d", job_id, frame_count)
-    if frame_count < 3:
-        raise RuntimeError(
-            f"Not enough image frames found in the archive (found {frame_count}, "
-            "need at least 3)."
+    if is_video:
+        # ------------------------------------------------------------------
+        # Step 1 – Extract frames from video via FFmpeg
+        # ------------------------------------------------------------------
+        logger.info("[job %s] Input is a video file; extracting frames", job_id)
+        frame_count = video_processor.extract_frames(
+            video_path=upload_path,
+            output_dir=extract_dir,
+            update_progress=lambda f, m: update_progress(0.02 + f * 0.08, m),
         )
+        images_dir = extract_dir / "images"
+        logger.info("[job %s] Extracted %d frames to %s", job_id, frame_count, images_dir)
+    else:
+        # ------------------------------------------------------------------
+        # Step 1 – Extract ZIP
+        # ------------------------------------------------------------------
+        update_progress(0.02, "Extracting archive")
+        logger.info("[job %s] Extracting %s → %s", job_id, upload_path, extract_dir)
+        try:
+            with zipfile.ZipFile(upload_path, "r") as zf:
+                zf.extractall(extract_dir)
+        except zipfile.BadZipFile as exc:
+            raise RuntimeError(f"Uploaded file is not a valid ZIP archive: {exc}") from exc
+
+        # ------------------------------------------------------------------
+        # Step 2 – Find images directory
+        # ------------------------------------------------------------------
+        update_progress(0.05, "Locating image frames")
+        images_dir = _find_images_dir(extract_dir)
+        logger.info("[job %s] Images directory: %s", job_id, images_dir)
+
+        frame_count = _count_images(images_dir)
+        logger.info("[job %s] Frame count: %d", job_id, frame_count)
+        if frame_count < 3:
+            raise RuntimeError(
+                f"Not enough image frames found in the archive (found {frame_count}, "
+                "need at least 3)."
+            )
 
     # ------------------------------------------------------------------
     # Step 3 – Check for existing transforms.json

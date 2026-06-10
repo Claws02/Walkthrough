@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>3D Splat Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #0a0a0f; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; }
+  #canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(10,10,15,0.92); color: #fff; z-index: 100; pointer-events: none;
+  }
+  #overlay.hidden { display: none; }
+  .spinner {
+    width: 48px; height: 48px; border: 3px solid rgba(255,255,255,0.15);
+    border-top-color: #5e6ad2; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 16px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #status { font-size: 15px; color: rgba(255,255,255,0.7); margin-top: 8px; }
+  #progress-bar {
+    width: 200px; height: 4px; background: rgba(255,255,255,0.1);
+    border-radius: 2px; margin-top: 16px; overflow: hidden;
+  }
+  #progress-fill { height: 100%; background: #5e6ad2; width: 0%; transition: width 0.3s; }
+  #hud {
+    position: fixed; bottom: max(24px, env(safe-area-inset-bottom));
+    left: 50%; transform: translateX(-50%);
+    display: flex; gap: 12px; z-index: 50; pointer-events: auto;
+  }
+  .hud-btn {
+    background: rgba(30,30,40,0.85); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 14px;
+    color: #fff; padding: 10px 18px; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; gap: 6px; transition: all 0.15s;
+  }
+  .hud-btn:active { background: rgba(94,106,210,0.5); transform: scale(0.96); }
+  #info {
+    position: fixed; top: max(16px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+    background: rgba(30,30,40,0.75); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;
+    padding: 8px 12px; color: rgba(255,255,255,0.6); font-size: 12px;
+    display: none; flex-direction: column; gap: 3px; z-index: 50;
+  }
+  #splat-count { color: rgba(255,255,255,0.9); font-weight: 600; }
+  #error-panel {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(10,10,15,0.95); color: #fff; z-index: 200; padding: 24px;
+  }
+  #error-panel h2 { color: #ff6b6b; margin-bottom: 12px; }
+  #error-msg { color: rgba(255,255,255,0.65); text-align: center; max-width: 340px; font-size: 14px; }
+  #retry-btn {
+    margin-top: 20px; background: #5e6ad2; border: none; color: #fff;
+    padding: 12px 28px; border-radius: 12px; font-size: 15px; cursor: pointer;
+  }
+  #drag-hint {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: rgba(30,30,40,0.9); backdrop-filter: blur(12px);
+    border: 2px dashed rgba(94,106,210,0.5); border-radius: 20px;
+    padding: 32px 48px; text-align: center; color: rgba(255,255,255,0.7);
+    pointer-events: none; z-index: 10;
+  }
+  #drag-hint h3 { color: #5e6ad2; margin-bottom: 8px; font-size: 18px; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<div id="overlay">
+  <div class="spinner"></div>
+  <div id="status">Initializing WebGL...</div>
+  <div id="progress-bar"><div id="progress-fill"></div></div>
+</div>
+
+<div id="info">
+  <span><b id="splat-count">0</b> Gaussians</span>
+  <span id="fps-display">0 FPS</span>
+</div>
+
+<div id="hud">
+  <button class="hud-btn" onclick="resetCamera()">⟳ Reset</button>
+  <button class="hud-btn" id="info-toggle" onclick="toggleInfo()">ℹ Info</button>
+  <button class="hud-btn" onclick="takeScreenshot()">📷 Shot</button>
+</div>
+
+<div id="error-panel">
+  <h2>Load Failed</h2>
+  <p id="error-msg">Could not load the 3D scene.</p>
+  <button id="retry-btn" onclick="location.reload()">Try Again</button>
+</div>
+
+<div id="drag-hint">
+  <h3>Open a .ply File</h3>
+  <p>Drag &amp; drop a Gaussian Splat .ply file here<br>or use <code>?file=URL</code> in the address bar</p>
+</div>
+
+<script>
+// ─── Gaussian Splat Renderer ─────────────────────────────────────────────────
+// Implements tile-based alpha blending for 3D Gaussian Splatting
+// Based on the SIGGRAPH 2023 paper by Kerbl et al.
+
+const canvas = document.getElementById('canvas');
+const gl = canvas.getContext('webgl2', { antialias: false, premultipliedAlpha: false });
+if (!gl) { showError('WebGL 2 is not supported on this device.'); }
+
+const EXT_COLOR_BUFFER_FLOAT = gl.getExtension('EXT_color_buffer_float');
+const OES_TEXTURE_FLOAT_LINEAR = gl.getExtension('OES_texture_float_linear');
+
+// Camera state
+let camera = {
+  position: [0, 0, 5],
+  target:   [0, 0, 0],
+  up:       [0, 1, 0],
+  fov: Math.PI / 3,
+};
+let orbitTheta = 0, orbitPhi = Math.PI / 4, orbitRadius = 5;
+let isDragging = false, lastX = 0, lastY = 0;
+let isPinching = false, lastPinchDist = 0;
+let splatData = null;
+let sortedIndices = null;
+let lastSortTime = 0;
+let sortWorker = null;
+let frameCount = 0, lastFpsTime = performance.now();
+let animFrameId = null;
+
+// ─── Vertex Shader ────────────────────────────────────────────────────────────
+const VS = `#version 300 es
+precision highp float;
+
+// Per-vertex quad data
+in vec2 a_position;  // -1..1 quad
+
+// Per-instance Gaussian data
+in vec3 a_center;
+in vec3 a_color;
+in float a_opacity;
+in vec3 a_scale;      // log-scale (as stored in PLY)
+in vec4 a_quat;       // rotation quaternion (w,x,y,z)
+
+uniform mat4 u_view;
+uniform mat4 u_proj;
+uniform vec2 u_viewport;
+uniform float u_focal;
+
+out vec3 v_color;
+out float v_opacity;
+out vec2 v_uv;
+out float v_valid;
+
+// Build rotation matrix from quaternion
+mat3 quatToMat(vec4 q) {
+  float w = q.x, x = q.y, y = q.z, z = q.w;
+  return mat3(
+    1.0 - 2.0*(y*y + z*z), 2.0*(x*y + w*z),       2.0*(x*z - w*y),
+    2.0*(x*y - w*z),       1.0 - 2.0*(x*x + z*z), 2.0*(y*z + w*x),
+    2.0*(x*z + w*y),       2.0*(y*z - w*x),       1.0 - 2.0*(x*x + y*y)
+  );
+}
+
+void main() {
+  v_valid = 0.0;
+  v_uv = a_position;
+
+  // Sigmoid opacity
+  float opacity = 1.0 / (1.0 + exp(-a_opacity));
+  if (opacity < 0.01) { gl_Position = vec4(0); return; }
+  v_opacity = opacity;
+
+  // Scale (exp of stored log-scale)
+  vec3 scale = exp(a_scale);
+
+  // Build 3D covariance: Sigma = R * S * S^T * R^T
+  mat3 R = quatToMat(a_quat);
+  mat3 S = mat3(scale.x, 0, 0,  0, scale.y, 0,  0, 0, scale.z);
+  mat3 RS = R * S;
+  // Sigma3D = RS * RS^T (symmetric)
+  mat3 Sigma3D = RS * transpose(RS);
+
+  // Camera-space center
+  vec4 camPos = u_view * vec4(a_center, 1.0);
+  if (camPos.z > -0.1) { gl_Position = vec4(0); return; }
+
+  // Jacobian of projection
+  float fx = u_focal;
+  float fy = u_focal * (u_viewport.x / u_viewport.y);
+  float z = camPos.z;
+  mat3 J = mat3(
+    fx / z, 0,     -fx * camPos.x / (z*z),
+    0,      fy/z,  -fy * camPos.y / (z*z),
+    0,      0,      0
+  );
+
+  // Camera rotation part of view matrix
+  mat3 W = mat3(u_view);
+
+  // 2D covariance: Sigma2D = J * W * Sigma3D * W^T * J^T
+  mat3 JW = J * W;
+  mat3 Sigma2D = JW * Sigma3D * transpose(JW);
+
+  // Eigenvalues of 2x2 covariance (top-left)
+  float a = Sigma2D[0][0], b = Sigma2D[0][1], d = Sigma2D[1][1];
+  float mid = 0.5 * (a + d);
+  float disc = sqrt(max(0.001, mid*mid - (a*d - b*b)));
+  float l1 = mid + disc, l2 = mid - disc;
+
+  // Splat extent in pixels
+  float r = ceil(3.0 * sqrt(max(l1, l2)));
+  if (r < 0.5) { gl_Position = vec4(0); return; }
+
+  // Projected center
+  vec4 clipPos = u_proj * camPos;
+  vec2 ndc = clipPos.xy / clipPos.w;
+
+  // Store cov2D for fragment blending via UV
+  // Encode as 2 params: lambda1, lambda2, angle
+  // For efficiency, we just use UV as [-r,r] offset and evaluate Gaussian there
+
+  // Screen-space offset
+  vec2 screenOffset = a_position * r;
+  vec2 pixelOffset = screenOffset / (u_viewport * 0.5);
+
+  gl_Position = vec4(ndc + pixelOffset, clipPos.z / clipPos.w, 1.0);
+  gl_PointSize = 1.0;
+
+  // Pass inverse covariance for fragment Gaussian evaluation
+  // Pack into UVs using the actual 2D covariance
+  float detSigma = a*d - b*b;
+  if (abs(detSigma) < 1e-6) { gl_Position = vec4(0); return; }
+  float invDet = 1.0 / detSigma;
+  // inv cov: [d, -b; -b, a] / det
+  float invA = d * invDet;
+  float invB = -b * invDet;
+  float invD = a * invDet;
+
+  // Encode screen-space position in UV for fragment to compute Gaussian power
+  // Map screen offset to "Gaussian UV": u = invA*dx + invB*dy, v = invB*dx + invD*dy
+  float dx = screenOffset.x, dy = screenOffset.y;
+  v_uv = vec2(invA * dx + invB * dy, invB * dx + invD * dy);
+
+  v_color = a_color;
+  v_valid = 1.0;
+}
+`;
+
+// ─── Fragment Shader ──────────────────────────────────────────────────────────
+const FS = `#version 300 es
+precision mediump float;
+in vec3 v_color;
+in float v_opacity;
+in vec2 v_uv;
+in float v_valid;
+out vec4 fragColor;
+
+void main() {
+  if (v_valid < 0.5) discard;
+  // 2D Gaussian evaluation: power = -0.5 * (uv dot original_uv)
+  // v_uv already contains inv_cov * screen_offset, original_uv = screen_offset
+  // So power = -0.5 * (invCov * d).dot(d) = -0.5 * v_uv.dot(original_d)
+  // We pass the already-transformed value; evaluate as dot with v_uv
+  float power = -0.5 * dot(v_uv, v_uv);
+  if (power < -4.0) discard;
+  float alpha = v_opacity * exp(power);
+  if (alpha < 0.003) discard;
+  fragColor = vec4(v_color * alpha, alpha);
+}
+`;
+
+// ─── PLY Parsing ─────────────────────────────────────────────────────────────
+function parsePLY(buffer) {
+  setStatus('Parsing PLY header...');
+  const text = new TextDecoder();
+  let headerEnd = 0;
+  const view8 = new Uint8Array(buffer);
+  for (let i = 0; i < buffer.byteLength - 10; i++) {
+    if (view8[i] === 101 && view8[i+1] === 110 && view8[i+2] === 100 &&
+        view8[i+3] === 95 && view8[i+4] === 104 && view8[i+5] === 101 &&
+        view8[i+6] === 97 && view8[i+7] === 100 && view8[i+8] === 101 && view8[i+9] === 114) {
+      // "end_header"
+      headerEnd = i + 10;
+      if (view8[headerEnd] === 13) headerEnd++; // \r
+      if (view8[headerEnd] === 10) headerEnd++; // \n
+      break;
+    }
+  }
+  const header = text.decode(buffer.slice(0, headerEnd));
+  const lines = header.split('\n').map(l => l.trim());
+
+  let numSplats = 0;
+  const props = [];
+  let inVertex = false;
+  for (const line of lines) {
+    if (line.startsWith('element vertex')) numSplats = parseInt(line.split(' ')[2]);
+    if (line === 'end_header') break;
+    if (line.startsWith('element')) inVertex = line.includes('vertex');
+    if (inVertex && line.startsWith('property float')) props.push(line.split(' ')[2]);
+  }
+
+  // Map property names to indices
+  const idx = {};
+  props.forEach((p, i) => { idx[p] = i; });
+
+  const FLOAT_SIZE = 4;
+  const stride = props.length;
+  const dataView = new DataView(buffer, headerEnd);
+  const little = true;
+
+  setStatus(`Loaded ${numSplats.toLocaleString()} Gaussians. Building buffers...`);
+
+  // Arrays for GPU
+  const centers   = new Float32Array(numSplats * 3);
+  const colors    = new Float32Array(numSplats * 3);
+  const opacities = new Float32Array(numSplats);
+  const scales    = new Float32Array(numSplats * 3);
+  const quats     = new Float32Array(numSplats * 4);
+
+  const SH_C0 = 0.28209479177387814; // 1 / (2*sqrt(pi))
+
+  for (let i = 0; i < numSplats; i++) {
+    const base = i * stride * FLOAT_SIZE;
+    const g = (name) => {
+      if (idx[name] === undefined) return 0;
+      return dataView.getFloat32(base + idx[name] * FLOAT_SIZE, little);
+    };
+
+    centers[i*3]   = g('x');
+    centers[i*3+1] = g('y');
+    centers[i*3+2] = g('z');
+
+    // DC color component → RGB (sigmoid-based SH evaluation for l=0)
+    const r = 0.5 + SH_C0 * g('f_dc_0');
+    const gr = 0.5 + SH_C0 * g('f_dc_1');
+    const b = 0.5 + SH_C0 * g('f_dc_2');
+    colors[i*3]   = Math.max(0, Math.min(1, r));
+    colors[i*3+1] = Math.max(0, Math.min(1, gr));
+    colors[i*3+2] = Math.max(0, Math.min(1, b));
+
+    opacities[i] = g('opacity');
+
+    scales[i*3]   = g('scale_0');
+    scales[i*3+1] = g('scale_1');
+    scales[i*3+2] = g('scale_2');
+
+    // Quaternion (w,x,y,z stored as rot_0..3)
+    quats[i*4]   = g('rot_0');
+    quats[i*4+1] = g('rot_1');
+    quats[i*4+2] = g('rot_2');
+    quats[i*4+3] = g('rot_3');
+  }
+
+  return { numSplats, centers, colors, opacities, scales, quats };
+}
+
+// ─── Shader Compilation ───────────────────────────────────────────────────────
+function compile(src, type) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    throw new Error(gl.getShaderInfoLog(sh));
+  }
+  return sh;
+}
+
+function createProgram(vs, fs) {
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(vs, gl.VERTEX_SHADER));
+  gl.attachShader(prog, compile(fs, gl.FRAGMENT_SHADER));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(prog));
+  }
+  return prog;
+}
+
+// ─── Matrix Math ─────────────────────────────────────────────────────────────
+function mat4() { return new Float32Array(16); }
+
+function perspectiveMatrix(fov, aspect, near, far) {
+  const m = mat4();
+  const f = 1.0 / Math.tan(fov / 2);
+  m[0] = f / aspect; m[5] = f;
+  m[10] = (far + near) / (near - far);
+  m[11] = -1;
+  m[14] = (2 * far * near) / (near - far);
+  return m;
+}
+
+function lookAt(eye, target, up) {
+  const m = mat4();
+  const z = normalize(sub3(eye, target));
+  const x = normalize(cross3(up, z));
+  const y = cross3(z, x);
+  m[0] = x[0]; m[4] = x[1]; m[8]  = x[2]; m[12] = -dot3(x, eye);
+  m[1] = y[0]; m[5] = y[1]; m[9]  = y[2]; m[13] = -dot3(y, eye);
+  m[2] = z[0]; m[6] = z[1]; m[10] = z[2]; m[14] = -dot3(z, eye);
+  m[15] = 1;
+  return m;
+}
+
+function normalize(v) { const l = Math.hypot(...v); return v.map(x => x/l); }
+function sub3(a, b)   { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+function dot3(a, b)   { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+function cross3(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+
+// ─── Depth Sorting ────────────────────────────────────────────────────────────
+function sortGaussians(centers, viewMatrix) {
+  const n = centers.length / 3;
+  const depths = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = centers[i*3], y = centers[i*3+1], z = centers[i*3+2];
+    depths[i] = viewMatrix[2]*x + viewMatrix[6]*y + viewMatrix[10]*z + viewMatrix[14];
+  }
+  const indices = new Uint32Array(n);
+  for (let i = 0; i < n; i++) indices[i] = i;
+  indices.sort((a, b) => depths[a] - depths[b]);
+  return indices;
+}
+
+// ─── GPU Setup ────────────────────────────────────────────────────────────────
+let program, vao;
+let centersBuf, colorsBuf, opacitiesBuf, scalesBuf, quatsBuf, quadBuf, indexBuf;
+let u_view, u_proj, u_viewport, u_focal;
+
+function setupGL(data) {
+  program = createProgram(VS, FS);
+  gl.useProgram(program);
+
+  u_view     = gl.getUniformLocation(program, 'u_view');
+  u_proj     = gl.getUniformLocation(program, 'u_proj');
+  u_viewport = gl.getUniformLocation(program, 'u_viewport');
+  u_focal    = gl.getUniformLocation(program, 'u_focal');
+
+  // Quad vertices for each splat: 2 triangles = 6 verts
+  const quad = new Float32Array([-1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1]);
+
+  vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+
+  quadBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+  function instancBuf(name, arr, components) {
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, arr, gl.DYNAMIC_DRAW);
+    const loc = gl.getAttribLocation(program, name);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, components, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(loc, 1);
+    return buf;
+  }
+
+  centersBuf   = instancBuf('a_center',  data.centers,   3);
+  colorsBuf    = instancBuf('a_color',   data.colors,    3);
+  opacitiesBuf = instancBuf('a_opacity', data.opacities, 1);
+  scalesBuf    = instancBuf('a_scale',   data.scales,    3);
+  quatsBuf     = instancBuf('a_quat',    data.quats,     4);
+
+  gl.bindVertexArray(null);
+
+  splatData = data;
+  document.getElementById('splat-count').textContent = data.numSplats.toLocaleString();
+
+  // Auto-fit camera to scene
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < data.numSplats; i++) {
+    cx += data.centers[i*3]; cy += data.centers[i*3+1]; cz += data.centers[i*3+2];
+  }
+  const inv = 1 / data.numSplats;
+  camera.target = [cx*inv, cy*inv, cz*inv];
+  orbitRadius = 3;
+  updateOrbitCamera();
+}
+
+// ─── Render Loop ──────────────────────────────────────────────────────────────
+function render() {
+  animFrameId = requestAnimationFrame(render);
+  if (!splatData) return;
+
+  resize();
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.04, 0.04, 0.06, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFuncSeparate(gl.ONE_MINUS_DST_ALPHA, gl.ONE, gl.ONE_MINUS_DST_ALPHA, gl.ONE);
+  gl.disable(gl.DEPTH_TEST);
+
+  const now = performance.now();
+  if (now - lastSortTime > 80) {
+    sortedIndices = sortGaussians(splatData.centers, viewMatrix);
+    // Re-upload in sorted order
+    const reorderFloat = (src, comps) => {
+      const out = new Float32Array(sortedIndices.length * comps);
+      for (let i = 0; i < sortedIndices.length; i++) {
+        const si = sortedIndices[i];
+        for (let c = 0; c < comps; c++) out[i*comps+c] = src[si*comps+c];
+      }
+      return out;
+    };
+    gl.bindBuffer(gl.ARRAY_BUFFER, centersBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, reorderFloat(splatData.centers, 3));
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorsBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, reorderFloat(splatData.colors, 3));
+    gl.bindBuffer(gl.ARRAY_BUFFER, opacitiesBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, reorderFloat(splatData.opacities, 1));
+    gl.bindBuffer(gl.ARRAY_BUFFER, scalesBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, reorderFloat(splatData.scales, 3));
+    gl.bindBuffer(gl.ARRAY_BUFFER, quatsBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, reorderFloat(splatData.quats, 4));
+    lastSortTime = now;
+  }
+
+  const aspect = canvas.width / canvas.height;
+  const projMatrix = perspectiveMatrix(camera.fov, aspect, 0.1, 1000);
+
+  gl.useProgram(program);
+  gl.uniformMatrix4fv(u_view, false, viewMatrix);
+  gl.uniformMatrix4fv(u_proj, false, projMatrix);
+  gl.uniform2f(u_viewport, canvas.width, canvas.height);
+  gl.uniform1f(u_focal, canvas.height / (2 * Math.tan(camera.fov / 2)));
+
+  gl.bindVertexArray(vao);
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, splatData.numSplats);
+  gl.bindVertexArray(null);
+
+  // FPS counter
+  frameCount++;
+  if (now - lastFpsTime > 1000) {
+    const fps = Math.round(frameCount * 1000 / (now - lastFpsTime));
+    document.getElementById('fps-display').textContent = fps + ' FPS';
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+}
+
+let viewMatrix = new Float32Array(16);
+
+function updateOrbitCamera() {
+  const x = camera.target[0] + orbitRadius * Math.cos(orbitPhi) * Math.sin(orbitTheta);
+  const y = camera.target[1] + orbitRadius * Math.sin(orbitPhi);
+  const z = camera.target[2] + orbitRadius * Math.cos(orbitPhi) * Math.cos(orbitTheta);
+  camera.position = [x, y, z];
+  viewMatrix = lookAt(camera.position, camera.target, camera.up);
+}
+
+// ─── Resize Handling ─────────────────────────────────────────────────────────
+let lastW = 0, lastH = 0;
+function resize() {
+  const w = canvas.clientWidth * devicePixelRatio;
+  const h = canvas.clientHeight * devicePixelRatio;
+  if (w !== lastW || h !== lastH) {
+    canvas.width = w; canvas.height = h;
+    lastW = w; lastH = h;
+  }
+}
+
+// ─── Input Handling ───────────────────────────────────────────────────────────
+const ROTATE_SPEED = 0.005, PAN_SPEED = 0.005, ZOOM_SPEED = 0.003;
+
+canvas.addEventListener('mousedown', e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('mouseup', () => isDragging = false);
+window.addEventListener('mousemove', e => {
+  if (!isDragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  if (e.shiftKey) {
+    const right = normalize(cross3(sub3(camera.position, camera.target), camera.up));
+    const up = normalize(camera.up);
+    const pan = PAN_SPEED * orbitRadius;
+    camera.target = camera.target.map((v, i) => v - right[i]*dx*pan + up[i]*dy*pan);
+  } else {
+    orbitTheta -= dx * ROTATE_SPEED;
+    orbitPhi = Math.max(-Math.PI/2 + 0.01, Math.min(Math.PI/2 - 0.01, orbitPhi - dy * ROTATE_SPEED));
+  }
+  updateOrbitCamera();
+  lastX = e.clientX; lastY = e.clientY;
+});
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  orbitRadius = Math.max(0.1, orbitRadius * (1 + e.deltaY * ZOOM_SPEED));
+  updateOrbitCamera();
+}, { passive: false });
+
+// Touch controls
+let prevTouches = [];
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  prevTouches = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY }));
+  isPinching = e.touches.length === 2;
+  if (isPinching) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    lastPinchDist = Math.hypot(dx, dy);
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const touches = Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY }));
+
+  if (e.touches.length === 2 && prevTouches.length === 2) {
+    // Pinch zoom
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.hypot(dx, dy);
+    orbitRadius = Math.max(0.1, orbitRadius * (lastPinchDist / dist));
+    lastPinchDist = dist;
+
+    // Two-finger pan
+    const cx = (touches[0].x + touches[1].x) / 2;
+    const cy = (touches[0].y + touches[1].y) / 2;
+    const pcx = (prevTouches[0].x + prevTouches[1].x) / 2;
+    const pcy = (prevTouches[0].y + prevTouches[1].y) / 2;
+    const px = cx - pcx, py = cy - pcy;
+    const right = normalize(cross3(sub3(camera.position, camera.target), camera.up));
+    const up = normalize(camera.up);
+    const pan = PAN_SPEED * orbitRadius;
+    camera.target = camera.target.map((v, i) => v - right[i]*px*pan + up[i]*py*pan);
+  } else if (e.touches.length === 1 && prevTouches.length === 1) {
+    // Single-finger orbit
+    const dx = touches[0].x - prevTouches[0].x;
+    const dy = touches[0].y - prevTouches[0].y;
+    orbitTheta -= dx * ROTATE_SPEED;
+    orbitPhi = Math.max(-Math.PI/2+0.01, Math.min(Math.PI/2-0.01, orbitPhi - dy * ROTATE_SPEED));
+  }
+
+  updateOrbitCamera();
+  prevTouches = touches;
+}, { passive: false });
+
+// ─── File Loading ─────────────────────────────────────────────────────────────
+async function loadFromURL(url) {
+  hideDragHint();
+  showOverlay('Downloading scene data...');
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const total = parseInt(resp.headers.get('Content-Length') || '0');
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (total > 0) setProgress(received / total * 0.6);
+    }
+    const buffer = await new Blob(chunks).arrayBuffer();
+    setProgress(0.7);
+    const data = parsePLY(buffer);
+    setProgress(0.9);
+    setupGL(data);
+    setProgress(1.0);
+    hideOverlay();
+    showInfo();
+    render();
+  } catch (err) {
+    showError('Failed to load: ' + err.message);
+  }
+}
+
+async function loadFromFile(file) {
+  hideDragHint();
+  showOverlay('Reading file...');
+  try {
+    const buffer = await file.arrayBuffer();
+    setProgress(0.5);
+    const data = parsePLY(buffer);
+    setProgress(0.9);
+    setupGL(data);
+    setProgress(1.0);
+    hideOverlay();
+    showInfo();
+    render();
+  } catch (err) {
+    showError('Failed to parse file: ' + err.message);
+  }
+}
+
+// ─── Drag & Drop ──────────────────────────────────────────────────────────────
+document.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (file && (file.name.endsWith('.ply') || file.name.endsWith('.splat'))) {
+    loadFromFile(file);
+  }
+});
+
+// ─── API: called from iOS WKWebView ───────────────────────────────────────────
+window.loadSplat = function(url) { loadFromURL(url); };
+window.resetCamera = resetCamera;
+
+function resetCamera() {
+  orbitTheta = 0; orbitPhi = Math.PI / 6; orbitRadius = 3;
+  updateOrbitCamera();
+}
+
+// ─── UI Helpers ───────────────────────────────────────────────────────────────
+function showOverlay(msg) {
+  document.getElementById('overlay').classList.remove('hidden');
+  setStatus(msg);
+}
+function hideOverlay() { document.getElementById('overlay').classList.add('hidden'); }
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+function setProgress(v) { document.getElementById('progress-fill').style.width = (v*100) + '%'; }
+function showInfo() { document.getElementById('info').style.display = 'flex'; }
+function hideDragHint() { document.getElementById('drag-hint').style.display = 'none'; }
+function toggleInfo() {
+  const el = document.getElementById('info');
+  el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+}
+function takeScreenshot() {
+  const link = document.createElement('a');
+  link.download = 'splat_view.png';
+  link.href = canvas.toDataURL();
+  link.click();
+}
+function showError(msg) {
+  document.getElementById('overlay').classList.add('hidden');
+  const panel = document.getElementById('error-panel');
+  panel.style.display = 'flex';
+  document.getElementById('error-msg').textContent = msg;
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+updateOrbitCamera();
+render();
+
+// Check URL params
+const params = new URLSearchParams(location.search);
+const fileUrl = params.get('file');
+if (fileUrl) {
+  loadFromURL(decodeURIComponent(fileUrl));
+} else {
+  hideOverlay();
+  document.getElementById('drag-hint').style.display = 'block';
+}
+
+// Message listener for WKWebView
+window.addEventListener('message', e => {
+  try {
+    const msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+    if (msg.type === 'load' && msg.url) loadFromURL(msg.url);
+  } catch {}
+});
+</script>
+</body>
+</html>

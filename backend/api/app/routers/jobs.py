@@ -163,10 +163,18 @@ async def upload_scan(
             detail=f"Job {job_id} cannot accept an upload in status '{job.status}'.",
         )
 
-    if not (file.filename or "").lower().endswith(".zip") and file.content_type not in (
-        "application/zip", "application/x-zip-compressed", "application/octet-stream",
-    ):
-        raise HTTPException(status_code=422, detail="Uploaded file must be a ZIP archive.")
+    _video_exts = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
+    _zip_mimes = {"application/zip", "application/x-zip-compressed", "application/octet-stream"}
+    _video_mimes = {"video/mp4", "video/quicktime", "video/x-msvideo", "video/webm", "video/x-matroska"}
+    filename_lower = (file.filename or "").lower()
+    ext = Path(filename_lower).suffix
+    is_zip = filename_lower.endswith(".zip") or file.content_type in _zip_mimes
+    is_video = ext in _video_exts or file.content_type in _video_mimes
+    if not is_zip and not is_video:
+        raise HTTPException(
+            status_code=422,
+            detail="Uploaded file must be a ZIP archive or a video file (.mp4, .mov, etc.).",
+        )
 
     upload_job_dir = Path(settings.UPLOAD_DIR) / job_id
     upload_job_dir.mkdir(parents=True, exist_ok=True)

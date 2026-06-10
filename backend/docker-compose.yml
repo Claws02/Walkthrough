@@ -62,6 +62,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./data:/data:ro
+      - ../web:/web:ro
     depends_on:
       - api
     restart: unless-stopped

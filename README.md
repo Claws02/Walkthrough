@@ -6,25 +6,44 @@ Transform your iPhone into a professional 3D scanner. Capture a room or object, 
 
 ## How It Works
 
+**Option A — No app needed: browser upload (works on any iPhone)**
+```
+iPhone Safari  →  http://YOUR_SERVER_IP
+  │
+  ├─ Record standard .mp4 / .mov with Camera app
+  └─ Upload via web page (drag-drop or tap)
+            │
+            ▼
+Backend Server (Docker)
+  │
+  ├─ FFmpeg extracts ~150 frames from video
+  ├─ COLMAP recovers camera poses via SfM
+  ├─ Nerfstudio `splatfacto` trains 3D Gaussian Splat
+  └─ Exports .ply
+            │
+            ▼
+Browser Viewer (same page, WebGL 2)
+  └─ Interactive 3D Gaussian Splat — orbit, pan, zoom
+```
+
+**Option B — Native iOS app (ARKit + LiDAR, best quality)**
 ```
 iPhone (ScanCapture app)
   │
   ├─ ARKit + LiDAR records frames at 5 FPS
-  ├─ Camera pose (4×4 matrix) logged for every frame via VIO
+  ├─ Camera pose (4×4 matrix) logged via VIO — skips COLMAP
   ├─ Depth map saved alongside each image
   └─ Packaged as a ZIP → uploaded to your server
             │
             ▼
 Backend Server (Docker)
   │
-  ├─ FastAPI receives upload, creates job
-  ├─ Celery worker picks up job from Redis
-  ├─ If no camera poses: runs COLMAP (feature matching + SfM)
+  ├─ Uses existing ARKit transforms directly (no COLMAP needed)
   ├─ Nerfstudio `splatfacto` trains 3D Gaussian Splat
   └─ Exports .ply → notifies app
             │
             ▼
-iPhone Viewer
+In-app Viewer
   └─ WebGL renderer displays interactive 3D scene
      (orbit, pan, zoom — 60+ FPS on iPhone 12 Pro+)
 ```
@@ -56,10 +75,14 @@ iPhone Viewer
 │       ├── Views/           All SwiftUI views
 │       └── Resources/       Info.plist, viewer.html (WebGL)
 │
+├── web/                     Browser upload UI + WebGL viewer (no app needed)
+│   ├── index.html           Mobile-first upload & job tracking page
+│   └── viewer.html          WebGL 2 Gaussian splat renderer
+│
 ├── backend/                 Self-hosted processing server
 │   ├── docker-compose.yml   Orchestrates all services
 │   ├── api/                 FastAPI REST service
-│   └── worker/              Celery GPU worker (COLMAP + Nerfstudio)
+│   └── worker/              Celery GPU worker (FFmpeg + COLMAP + Nerfstudio)
 │
 ├── viewer/                  Standalone web viewer (works in any browser)
 │   └── index.html           Drop-in WebGL 2 Gaussian splat renderer
@@ -120,10 +143,23 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-The API will be available at `http://YOUR_SERVER_IP:8000`.  
-Interactive API docs: `http://YOUR_SERVER_IP:8000/docs`.
+The web UI is available at `http://YOUR_SERVER_IP` — open it in iPhone Safari to upload videos directly.  
+API docs: `http://YOUR_SERVER_IP/api/docs`.
 
-### Step 2 — Build the iOS app
+### Step 2a — Use from iPhone Safari (no Xcode needed)
+
+1. Open `http://YOUR_SERVER_IP` in Safari on your iPhone
+2. Tap **Upload Scan** and select a video from your Camera Roll (`.mp4` or `.mov`)
+3. The page shows upload progress and polls for job status automatically
+4. When processing completes, tap **View in 3D** to open the splat in the browser viewer
+
+**Tips for best results with standard video:**
+- Film slowly and steadily — fast motion blurs frames and confuses COLMAP
+- Circle the subject 2–3 times at different heights
+- Avoid pointing directly at featureless white walls
+- 20–60 second clips work well (~150 frames extracted)
+
+### Step 2b — Build the iOS app (optional, best quality)
 
 ```bash
 # Install XcodeGen (macOS only)
@@ -164,7 +200,7 @@ All server settings are in `backend/.env` (copied from `.env.example`):
 | `REDIS_URL` | `redis://redis:6379/0` | Redis broker URL |
 | `UPLOAD_DIR` | `/data/uploads` | Where ZIPs are stored |
 | `RESULTS_DIR` | `/data/results` | Where .ply files are stored |
-| `MAX_UPLOAD_SIZE_MB` | `500` | Max upload file size |
+| `MAX_UPLOAD_SIZE_MB` | `1024` | Max upload file size (supports long videos) |
 | `NERFSTUDIO_MAX_ITERATIONS` | `30000` | Training iterations (quality vs speed) |
 | `COLMAP_GPU_INDEX` | `0` | GPU index for COLMAP, `-1` = all |
 
@@ -288,23 +324,25 @@ Rendering projects each Gaussian to a 2D ellipse via the EWA splatting formula, 
 ### Server pipeline
 
 ```
-ZIP upload
+Upload (.mp4/.mov video  OR  .zip ARKit capture)
     │
-    ├─ Has transforms.json? ─── Yes ──▶ Convert to Nerfstudio data format
-    │                                            │
-    └─── No ──▶ COLMAP SfM                       │
-                  │                              │
-                  └──── transforms.json ─────────┘
-                                                 │
-                                                 ▼
-                                    ns-train splatfacto
-                                    (30 000 iterations)
-                                                 │
-                                                 ▼
-                                    ns-export gaussian-splat
-                                                 │
-                                                 ▼
-                                    result.ply → /data/results/{job_id}/
+    ├─ Video? ──▶ FFmpeg extracts ~150 JPEG frames
+    │                      │
+    └─ ZIP? ──▶ Extract     │
+                  │         │
+                  ├─ Has transforms.json? ─── Yes ──▶ Nerfstudio data dir
+                  │                                          │
+                  └─── No ──▶ COLMAP SfM ──────────────────┘
+                                                            │
+                                                            ▼
+                                               ns-train splatfacto
+                                               (30 000 iterations)
+                                                            │
+                                                            ▼
+                                               ns-export gaussian-splat
+                                                            │
+                                                            ▼
+                                               result.ply → /data/results/{job_id}/
 ```
 
 ---

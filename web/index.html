@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ScanCapture">
+<meta name="theme-color" content="#000000">
+<title>ScanCapture 3D</title>
+<style>
+:root {
+  --bg:        #000;
+  --card:      #1c1c1e;
+  --card2:     #2c2c2e;
+  --accent:    #5e6ad2;
+  --accent-d:  rgba(94,106,210,.18);
+  --ok:        #34c759;
+  --warn:      #ff9500;
+  --err:       #ff3b30;
+  --text:      #fff;
+  --muted:     rgba(255,255,255,.55);
+  --border:    rgba(255,255,255,.08);
+  --r:         16px;
+  --r-sm:      10px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--bg);color:var(--text);font-family:-apple-system,'SF Pro Display','Helvetica Neue',sans-serif;min-height:100%;-webkit-font-smoothing:antialiased}
+body{padding-top:env(safe-area-inset-top);padding-bottom:calc(env(safe-area-inset-bottom) + 32px)}
+
+/* ── Header ── */
+header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;border-bottom:1px solid var(--border);position:sticky;top:env(safe-area-inset-top);background:rgba(0,0,0,.88);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);z-index:100}
+.h-title{font-size:17px;font-weight:700;letter-spacing:-.3px}
+.h-sub{font-size:11px;color:var(--muted);letter-spacing:.2px}
+
+/* ── Layout ── */
+main{padding:0 16px;max-width:600px;margin:0 auto}
+
+/* ── Section headers ── */
+.sec{display:flex;align-items:center;gap:8px;padding:20px 0 10px}
+.sec-title{font-size:20px;font-weight:700;letter-spacing:-.4px}
+.badge{background:var(--card2);color:var(--muted);font-size:12px;font-weight:600;padding:2px 8px;border-radius:20px;min-width:24px;text-align:center}
+.badge.lit{background:var(--accent-d);color:var(--accent)}
+.sec-btn{margin-left:auto;background:none;border:none;color:var(--accent);font-size:14px;font-weight:500;cursor:pointer;padding:6px 10px;border-radius:var(--r-sm);min-height:36px}
+.sec-btn:active{opacity:.6}
+
+/* ── Upload card ── */
+#upload-card{border:2px dashed rgba(94,106,210,.4);border-radius:var(--r);background:var(--card);padding:36px 24px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;margin-top:4px;user-select:none;position:relative;overflow:hidden}
+#upload-card.over{border-color:var(--accent);background:var(--accent-d)}
+#upload-card:active{background:var(--card2)}
+#file-input{position:absolute;width:0;height:0;opacity:0;pointer-events:none}
+.upl-icon{width:56px;height:56px;margin:0 auto 16px;background:var(--accent-d);border-radius:18px;display:flex;align-items:center;justify-content:center}
+.upl-icon svg{width:28px;height:28px}
+.upl-head{font-size:20px;font-weight:700;margin-bottom:6px;letter-spacing:-.3px}
+.upl-sub{font-size:14px;color:var(--muted);line-height:1.5}
+.upl-tags{display:inline-flex;gap:6px;margin-top:14px;flex-wrap:wrap;justify-content:center}
+.upl-tags span{background:var(--card2);color:var(--muted);font-size:12px;font-weight:600;padding:4px 10px;border-radius:20px;letter-spacing:.3px}
+
+/* ── Progress panel ── */
+#prog-panel{display:none;background:var(--card);border-radius:var(--r);padding:18px 20px;margin-top:12px}
+.prog-hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.prog-name{font-size:14px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prog-pct{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;font-weight:500;min-width:40px;text-align:right}
+.bar-track{background:var(--card2);border-radius:4px;height:6px;overflow:hidden}
+.bar-fill{background:var(--accent);height:100%;border-radius:4px;width:0%;transition:width .2s}
+.prog-msg{font-size:12px;color:var(--muted);margin-top:8px}
+#cancel-btn{background:var(--card2);border:none;color:var(--err);font-size:13px;font-weight:600;padding:6px 14px;border-radius:var(--r-sm);cursor:pointer;min-height:32px;white-space:nowrap}
+#cancel-btn:active{opacity:.6}
+
+/* ── Job cards ── */
+#jobs-list{display:flex;flex-direction:column;gap:10px}
+.job{background:var(--card);border-radius:var(--r);padding:16px 18px}
+.job-top{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px}
+.job-id{font-family:'SF Mono','Menlo',monospace;font-size:13px;font-weight:600;flex:1}
+.job-time{font-size:12px;color:var(--muted);padding-top:1px;white-space:nowrap}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:3px 9px;border-radius:20px}
+.pill.pending   {background:rgba(142,142,147,.2);color:#8e8e93}
+.pill.processing{background:rgba(94,106,210,.2);color:var(--accent)}
+.pill.completed {background:rgba(52,199,89,.2);color:var(--ok)}
+.pill.failed    {background:rgba(255,59,48,.2);color:var(--err)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.pill.processing::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);animation:blink 1.2s ease-in-out infinite}
+.job-msg{font-size:13px;color:var(--muted);margin:6px 0 10px;min-height:18px}
+.jbar-track{background:var(--card2);border-radius:3px;height:4px;overflow:hidden;margin-bottom:12px}
+.jbar-fill{background:var(--accent);height:100%;border-radius:3px;transition:width .6s ease}
+.job-acts{display:flex;gap:8px;align-items:center}
+.view-btn{flex:1;background:var(--accent);color:#fff;border:none;border-radius:var(--r-sm);font-size:14px;font-weight:700;padding:10px 16px;cursor:pointer;min-height:40px;letter-spacing:-.2px;display:flex;align-items:center;justify-content:center;gap:6px;text-decoration:none}
+.view-btn:active{opacity:.7;transform:scale(.98)}
+.del-btn{background:rgba(255,59,48,.12);color:var(--err);border:none;border-radius:var(--r-sm);padding:10px 14px;cursor:pointer;min-height:40px;min-width:44px;display:flex;align-items:center;justify-content:center}
+.del-btn:active{opacity:.6}
+.job-note{flex:1;font-size:13px;color:var(--muted);display:flex;align-items:center;padding-left:4px}
+
+/* ── Empty state ── */
+#empty{text-align:center;padding:40px 24px;color:var(--muted);display:none}
+#empty svg{width:48px;height:48px;opacity:.3;margin-bottom:12px}
+#empty p{font-size:15px;line-height:1.5}
+#empty small{font-size:13px;opacity:.7}
+
+/* ── Footer ── */
+footer{text-align:center;color:var(--muted);font-size:13px;padding:20px 20px 0;max-width:600px;margin:0 auto;line-height:1.5}
+
+/* ── Toast ── */
+#toasts{position:fixed;bottom:calc(env(safe-area-inset-bottom) + 20px);left:50%;transform:translateX(-50%);z-index:999;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
+.toast{background:rgba(44,44,46,.97);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);color:#fff;border-radius:12px;padding:11px 18px;font-size:14px;font-weight:500;max-width:min(340px,90vw);text-align:center;animation:tin .25s ease-out,tout .3s ease-in 3.7s forwards;pointer-events:none}
+@keyframes tin {from{opacity:0;transform:translateY(12px)}}
+@keyframes tout{to  {opacity:0;transform:translateY(12px)}}
+.toast.err{background:rgba(255,59,48,.94)}
+.toast.ok {background:rgba(52,199,89,.94)}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="h-title">ScanCapture 3D</span>
+  <span class="h-sub">Gaussian Splatting</span>
+</header>
+
+<main>
+  <div class="sec"><span class="sec-title">New Scan</span></div>
+
+  <div id="upload-card" role="button" tabindex="0" aria-label="Upload video or scan archive">
+    <input type="file" id="file-input" accept="video/*,.zip,application/zip">
+    <div class="upl-icon">
+      <svg viewBox="0 0 28 28" fill="none">
+        <rect x="2" y="7" width="18" height="14" rx="3" stroke="#5e6ad2" stroke-width="2"/>
+        <path d="M20 11.5l6-3v11l-6-3" stroke="#5e6ad2" stroke-width="2" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="upl-head">Scan a Scene</div>
+    <div class="upl-sub">Tap to select an iPhone video or scan archive<br>Best results: 30–90 second slow walkthrough</div>
+    <div class="upl-tags">
+      <span>.mp4</span><span>.mov</span><span>.zip</span><span>up to 1 GB</span>
+    </div>
+  </div>
+
+  <div id="prog-panel">
+    <div class="prog-hdr">
+      <div class="prog-name" id="prog-name">Uploading…</div>
+      <div class="prog-pct" id="prog-pct">0%</div>
+      <button id="cancel-btn">Cancel</button>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="prog-bar"></div></div>
+    <div class="prog-msg" id="prog-msg">Preparing…</div>
+  </div>
+
+  <div class="sec">
+    <span class="sec-title">Your Scans</span>
+    <span class="badge" id="job-count">0</span>
+    <button class="sec-btn" id="refresh-btn">↻ Refresh</button>
+  </div>
+
+  <div id="jobs-list"></div>
+
+  <div id="empty">
+    <svg viewBox="0 0 48 48" fill="none">
+      <rect x="6" y="14" width="28" height="22" rx="4" stroke="currentColor" stroke-width="2.5"/>
+      <path d="M34 21l8-4v14l-8-4" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+    </svg>
+    <p>No scans yet</p>
+    <small>Record a 30–90 s walkthrough, then upload above</small>
+  </div>
+</main>
+
+<footer>Tip: walk slowly · keep the phone steady · good lighting · avoid flat textureless walls</footer>
+<div id="toasts"></div>
+
+<script>
+'use strict';
+const API = '';          // same-origin via nginx
+const POLL = 4000;
+
+class App {
+  constructor() {
+    this.jobs = [];
+    this.timer = null;
+    this.xhr   = null;
+    this.$ = id => document.getElementById(id);
+    this.card      = this.$('upload-card');
+    this.fileInput = this.$('file-input');
+    this.progPanel = this.$('prog-panel');
+    this.progName  = this.$('prog-name');
+    this.progPct   = this.$('prog-pct');
+    this.progBar   = this.$('prog-bar');
+    this.progMsg   = this.$('prog-msg');
+  }
+
+  init() {
+    this.card.addEventListener('click',  () => this.fileInput.click());
+    this.card.addEventListener('keydown', e => (e.key==='Enter'||e.key===' ') && this.fileInput.click());
+    this.fileInput.addEventListener('change', e => {
+      const f = e.target.files?.[0]; if(f) this.pick(f); this.fileInput.value='';
+    });
+    // drag-drop (desktop)
+    this.card.addEventListener('dragover',  e => { e.preventDefault(); this.card.classList.add('over'); });
+    this.card.addEventListener('dragleave', () => this.card.classList.remove('over'));
+    this.card.addEventListener('drop', e => {
+      e.preventDefault(); this.card.classList.remove('over');
+      const f = e.dataTransfer.files?.[0]; if(f) this.pick(f);
+    });
+    this.$('cancel-btn').addEventListener('click', () => {
+      this.xhr?.abort(); this.xhr = null; this.hideProgress(); this.toast('Upload cancelled');
+    });
+    this.$('refresh-btn').addEventListener('click', () => this.loadJobs());
+    document.addEventListener('visibilitychange', () =>
+      document.visibilityState==='visible' ? this.startPoll() : this.stopPoll());
+    this.loadJobs(); this.startPoll();
+  }
+
+  pick(file) {
+    const n = file.name.toLowerCase();
+    if(!/\.(mp4|mov|m4v|avi|mkv|webm|zip)$/.test(n)) {
+      return this.toast('Please select a .mp4, .mov, or .zip file', 'err');
+    }
+    if(file.size > 1.15e9) return this.toast('File exceeds 1 GB limit', 'err');
+    this.upload(file);
+  }
+
+  upload(file) {
+    this.showProgress(file.name);
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    const xhr = this.xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener('progress', e => {
+      if(!e.lengthComputable) return;
+      const p = Math.round(e.loaded/e.total*100);
+      this.setBar(p);
+      this.progMsg.textContent = p<100
+        ? `Uploading ${this.bytes(e.loaded)} of ${this.bytes(e.total)}`
+        : 'Waiting for server…';
+    });
+    xhr.addEventListener('load', () => {
+      this.xhr = null;
+      if(xhr.status>=200 && xhr.status<300) {
+        try {
+          const job = JSON.parse(xhr.responseText);
+          this.hideProgress();
+          this.toast('Scan queued — processing will begin shortly', 'ok');
+          this.loadJobs(); this.startPoll();
+        } catch { this.uploadErr('Invalid server response'); }
+      } else {
+        let d=''; try{d=JSON.parse(xhr.responseText).detail||'';}catch{}
+        this.uploadErr(`HTTP ${xhr.status}${d?': '+d:''}`);
+      }
+    });
+    xhr.addEventListener('error', () => { this.xhr=null; this.uploadErr('Network error — is the server running?'); });
+    xhr.addEventListener('abort', () => { this.xhr=null; });
+    xhr.open('POST', `${API}/api/jobs`);
+    xhr.send(fd);
+  }
+
+  uploadErr(msg) { this.hideProgress(); this.toast(msg,'err'); }
+
+  showProgress(name) {
+    this.card.style.display='none'; this.progPanel.style.display='block';
+    this.progName.textContent=name; this.setBar(0); this.progMsg.textContent='Preparing…';
+  }
+  hideProgress() {
+    this.progPanel.style.display='none'; this.card.style.display='block'; this.setBar(0);
+  }
+  setBar(p) { this.progBar.style.width=p+'%'; this.progPct.textContent=p+'%'; }
+
+  async loadJobs() {
+    try {
+      const r = await fetch(`${API}/api/jobs`);
+      if(!r.ok) throw new Error(`HTTP ${r.status}`);
+      this.jobs = await r.json();
+      this.render();
+      const active = this.jobs.some(j=>j.status==='pending'||j.status==='processing');
+      if(!active) this.stopPoll();
+    } catch(e) { console.warn('loadJobs:', e.message); }
+  }
+
+  startPoll() { if(!this.timer) this.timer=setInterval(()=>{ if(document.visibilityState==='visible') this.loadJobs(); },POLL); }
+  stopPoll()  { clearInterval(this.timer); this.timer=null; }
+
+  render() {
+    const n = this.jobs.length;
+    const cnt = this.$('job-count');
+    cnt.textContent=n; cnt.className='badge'+(n?' lit':'');
+    const list  = this.$('jobs-list');
+    const empty = this.$('empty');
+    if(!n){ list.innerHTML=''; empty.style.display='block'; return; }
+    empty.style.display='none';
+    list.innerHTML = this.jobs.map(j=>this.card(j)).join('');
+    list.querySelectorAll('.del-btn').forEach(b =>
+      b.addEventListener('click', ()=>{
+        if(confirm(`Delete scan ${b.dataset.id.slice(0,8).toUpperCase()}?`)) this.del(b.dataset.id);
+      }));
+  }
+
+  card(j) {
+    const pct  = Math.round((j.progress||0)*100);
+    const show = j.status==='processing'||(j.status==='pending'&&pct>0);
+    const url  = j.status==='completed'&&j.result_url
+      ? `/viewer.html?file=${encodeURIComponent(j.result_url)}` : null;
+    return `<div class="job">
+      <div class="job-top">
+        <span class="job-id">${j.id.slice(0,8).toUpperCase()}</span>
+        <span class="pill ${j.status}">${this.label(j.status)}</span>
+      </div>
+      <div class="job-time">${this.ago(j.created_at)}</div>
+      <div class="job-msg">${j.message?this.esc(j.message):''}</div>
+      ${show?`<div class="jbar-track"><div class="jbar-fill" style="width:${pct}%"></div></div>`:''}
+      <div class="job-acts">
+        ${url
+          ?`<a class="view-btn" href="${url}" target="_blank" rel="noopener">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M2 8s2.5-4.5 6-4.5S14 8 14 8s-2.5 4.5-6 4.5S2 8 2 8z" stroke="#fff" stroke-width="1.5"/>
+                <circle cx="8" cy="8" r="2" stroke="#fff" stroke-width="1.5"/>
+              </svg>View in 3D</a>`
+          :`<div class="job-note">${j.status==='processing'?pct+'% complete':j.status==='failed'?'Failed':'Queued…'}</div>`}
+        <button class="del-btn" data-id="${j.id}" aria-label="Delete">
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+            <path d="M2.5 4h10M5.5 4V3h4v1M4.5 4l.5 8h5l.5-8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>`;
+  }
+
+  async del(id) {
+    try {
+      await fetch(`${API}/api/jobs/${id}`,{method:'DELETE'});
+      this.jobs=this.jobs.filter(j=>j.id!==id); this.render();
+    } catch(e){ this.toast('Delete failed: '+e.message,'err'); }
+  }
+
+  label(s){ return{pending:'Queued',processing:'Processing',completed:'Complete',failed:'Failed'}[s]||s; }
+
+  ago(iso) {
+    if(!iso) return '';
+    const d=(Date.now()-new Date(iso).getTime())/1000;
+    if(d<60)    return 'Just now';
+    if(d<3600)  return Math.floor(d/60)+' min ago';
+    if(d<86400) return Math.floor(d/3600)+' hr ago';
+    return Math.floor(d/86400)+' days ago';
+  }
+
+  bytes(n) {
+    if(n>=1e9) return (n/1e9).toFixed(1)+' GB';
+    if(n>=1e6) return (n/1e6).toFixed(1)+' MB';
+    return (n/1e3).toFixed(0)+' KB';
+  }
+
+  esc(s){ return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+  toast(msg, type='') {
+    const el=document.createElement('div');
+    el.className='toast'+(type?' '+type:'');
+    el.textContent=msg;
+    this.$('toasts').appendChild(el);
+    setTimeout(()=>el.remove(),4200);
+  }
+}
+
+new App().init();
+</script>
+</body>
+</html>
