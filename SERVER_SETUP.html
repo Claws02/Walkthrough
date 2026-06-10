@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ScanCapture 3D — Server Setup Tutorial</title>
+<style>
+  /* ── Reset & Base ───────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:        #0f1117;
+    --surface:   #1a1d27;
+    --surface2:  #22263a;
+    --border:    #2e3250;
+    --accent:    #4f7fff;
+    --accent2:   #7c5dfa;
+    --green:     #22c55e;
+    --yellow:    #f59e0b;
+    --red:       #ef4444;
+    --text:      #e4e8ff;
+    --muted:     #8892b0;
+    --code-bg:   #13151f;
+    --radius:    10px;
+  }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 16px;
+  }
+
+  /* ── Print overrides ────────────────────────────────────────── */
+  @media print {
+    body { background: #fff; color: #111; font-size: 12pt; }
+    :root { --bg: #fff; --surface: #f5f5f5; --surface2: #eee; --border: #ccc;
+            --accent: #2040cc; --text: #111; --muted: #555; --code-bg: #f0f0f0; }
+    .no-print { display: none !important; }
+    pre, code { border: 1px solid #ccc; }
+    h1, h2, h3 { page-break-after: avoid; }
+    .step-block { page-break-inside: avoid; }
+    a { color: #2040cc; text-decoration: underline; }
+  }
+
+  /* ── Layout ─────────────────────────────────────────────────── */
+  .page-wrap {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+
+  /* ── Header ─────────────────────────────────────────────────── */
+  header {
+    text-align: center;
+    padding: 48px 0 36px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 44px;
+  }
+  .logo-line {
+    font-size: 13px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+  }
+  header h1 {
+    font-size: clamp(26px, 5vw, 42px);
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.2;
+    margin-bottom: 16px;
+  }
+  header p.subtitle {
+    color: var(--muted);
+    font-size: 17px;
+    max-width: 560px;
+    margin: 0 auto;
+  }
+  .print-btn {
+    display: inline-block;
+    margin-top: 24px;
+    padding: 10px 24px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: opacity .15s;
+  }
+  .print-btn:hover { opacity: .85; }
+
+  /* ── Table of contents ──────────────────────────────────────── */
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin-bottom: 48px;
+  }
+  .toc h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 2px; color: var(--muted); margin-bottom: 16px; }
+  .toc ol { padding-left: 22px; }
+  .toc li { margin-bottom: 8px; }
+  .toc a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* ── Section headings ───────────────────────────────────────── */
+  .section { margin-bottom: 56px; }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 24px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-num {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #fff;
+    font-weight: 700;
+    font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .section h2 { font-size: 22px; font-weight: 700; }
+
+  /* ── Prose ──────────────────────────────────────────────────── */
+  p { margin-bottom: 14px; color: var(--text); }
+  ul, ol { padding-left: 22px; margin-bottom: 14px; }
+  li { margin-bottom: 6px; }
+  strong { color: #fff; font-weight: 600; }
+  a { color: var(--accent); }
+
+  /* ── Code blocks ────────────────────────────────────────────── */
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 14px 0 20px;
+    position: relative;
+  }
+  pre code {
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+    font-size: 13.5px;
+    color: #c9d1f5;
+    background: none;
+    border: none;
+    padding: 0;
+  }
+  code {
+    font-family: "SF Mono", "Fira Code", Consolas, monospace;
+    font-size: 13px;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: #a8b4e8;
+  }
+
+  /* Copy button */
+  .copy-btn {
+    position: absolute;
+    top: 10px; right: 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    border-radius: 5px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: color .15s, background .15s;
+  }
+  .copy-btn:hover { color: var(--text); background: var(--border); }
+  .copy-btn.copied { color: var(--green); border-color: var(--green); }
+
+  /* ── Callout boxes ───────────────────────────────────────────── */
+  .callout {
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin: 18px 0;
+    border-left: 4px solid;
+    display: flex;
+    gap: 12px;
+  }
+  .callout-icon { font-size: 20px; flex-shrink: 0; line-height: 1.4; }
+  .callout-body { flex: 1; }
+  .callout-body p:last-child { margin-bottom: 0; }
+  .callout.info    { background: #1a2a4a; border-color: var(--accent); }
+  .callout.warn    { background: #2a2010; border-color: var(--yellow); }
+  .callout.success { background: #0f2a1a; border-color: var(--green); }
+  .callout.danger  { background: #2a1010; border-color: var(--red); }
+
+  /* ── Step blocks ─────────────────────────────────────────────── */
+  .step-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .step-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .step-block h3 { font-size: 17px; margin-bottom: 12px; }
+
+  /* ── Hardware table ──────────────────────────────────────────── */
+  .hw-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 14px;
+  }
+  .hw-table th {
+    text-align: left;
+    padding: 10px 14px;
+    background: var(--surface2);
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hw-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .hw-table tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .5px;
+  }
+  .badge.min { background: #2a2010; color: var(--yellow); }
+  .badge.rec { background: #0f2a1a; color: var(--green); }
+
+  /* ── Progress tracker ────────────────────────────────────────── */
+  .progress-track {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 32px;
+  }
+  .progress-chip {
+    padding: 6px 14px;
+    border-radius: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    cursor: default;
+    user-select: none;
+  }
+
+  /* ── Troubleshoot ────────────────────────────────────────────── */
+  .trouble-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  .trouble-q {
+    padding: 14px 20px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .trouble-q:hover { background: var(--surface2); }
+  .trouble-q .arrow { color: var(--accent); font-size: 18px; transition: transform .2s; }
+  .trouble-a {
+    padding: 0 20px;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height .3s ease, padding .2s;
+    color: var(--muted);
+  }
+  .trouble-a.open {
+    max-height: 600px;
+    padding: 0 20px 16px;
+  }
+  .trouble-q.open .arrow { transform: rotate(90deg); }
+
+  /* ── Footer ──────────────────────────────────────────────────── */
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+    margin-top: 48px;
+  }
+</style>
+</head>
+<body>
+<div class="page-wrap">
+
+<!-- ═══════════════════ HEADER ═══════════════════ -->
+<header>
+  <div class="logo-line">ScanCapture 3D</div>
+  <h1>Server Setup Tutorial</h1>
+  <p class="subtitle">Step-by-step guide to deploying the 3D Gaussian Splatting processing server and using it from your iPhone — no app install required.</p>
+  <button class="print-btn no-print" onclick="window.print()">⬇ Save as PDF</button>
+</header>
+
+<!-- ═══════════════════ TOC ═══════════════════ -->
+<nav class="toc" aria-label="Table of contents">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s1">What You Need — Hardware &amp; Prerequisites</a></li>
+    <li><a href="#s2">Install Docker &amp; NVIDIA Container Toolkit</a></li>
+    <li><a href="#s3">Clone the Repository</a></li>
+    <li><a href="#s4">Configure the Environment</a></li>
+    <li><a href="#s5">Build &amp; Start the Server</a></li>
+    <li><a href="#s6">Find Your Server IP</a></li>
+    <li><a href="#s7">Use the App from Your iPhone</a></li>
+    <li><a href="#s8">Managing the Server (Start / Stop / Logs)</a></li>
+    <li><a href="#s9">Troubleshooting</a></li>
+  </ol>
+</nav>
+
+<!-- ═══════════════════ OVERVIEW ═══════════════════ -->
+<div class="callout info">
+  <span class="callout-icon">ℹ️</span>
+  <div class="callout-body">
+    <p><strong>How it works:</strong> You run a Linux server (or cloud VM) with Docker. The server hosts a web page you open on your iPhone — upload a video, watch training progress, then view and download the finished 3D scene. No app to install.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════ S1 — HARDWARE ═══════════════════ -->
+<section class="section" id="s1">
+  <div class="section-header">
+    <div class="section-num">1</div>
+    <h2>What You Need — Hardware &amp; Prerequisites</h2>
+  </div>
+
+  <table class="hw-table">
+    <thead>
+      <tr>
+        <th>Component</th>
+        <th>Minimum <span class="badge min">MIN</span></th>
+        <th>Recommended <span class="badge rec">REC</span></th>
+        <th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>GPU</strong></td>
+        <td>CPU only (slow)</td>
+        <td>NVIDIA RTX 3090 / 4090</td>
+        <td>GPU training is 20–50× faster. CPU is viable for testing.</td>
+      </tr>
+      <tr>
+        <td><strong>VRAM</strong></td>
+        <td>—</td>
+        <td>16 GB+</td>
+        <td>Large scenes need more VRAM.</td>
+      </tr>
+      <tr>
+        <td><strong>RAM</strong></td>
+        <td>8 GB</td>
+        <td>32 GB</td>
+        <td>COLMAP reconstruction is memory-intensive.</td>
+      </tr>
+      <tr>
+        <td><strong>Disk</strong></td>
+        <td>40 GB free</td>
+        <td>200 GB SSD</td>
+        <td>Docker images ≈ 20 GB; each job ≈ 5–15 GB.</td>
+      </tr>
+      <tr>
+        <td><strong>OS</strong></td>
+        <td colspan="2">Ubuntu 22.04 LTS (or 24.04)</td>
+        <td>Other Linux distros work; adjust package manager commands.</td>
+      </tr>
+      <tr>
+        <td><strong>Network</strong></td>
+        <td colspan="2">Local network (Wi-Fi/Ethernet)</td>
+        <td>iPhone and server must be on the same Wi-Fi, or use a VPN / port forward for remote access.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <span class="callout-icon">⚠️</span>
+    <div class="callout-body">
+      <p><strong>Cloud VMs:</strong> AWS <code>g4dn.xlarge</code>, <code>g5.xlarge</code> or GCP <code>n1-standard-4 + T4</code> all work. Make sure to open <strong>port 80</strong> in the security group / firewall so your iPhone can reach the server.</p>
+    </div>
+  </div>
+
+  <h3 style="margin-top:24px;margin-bottom:12px;">Software you need on the server</h3>
+  <ul>
+    <li><strong>Git</strong> — to clone the repo</li>
+    <li><strong>Docker Engine</strong> + <strong>Docker Compose v2</strong> — runs all services</li>
+    <li><strong>NVIDIA Container Toolkit</strong> — only if you have an NVIDIA GPU</li>
+  </ul>
+  <p>Everything else (COLMAP, FFmpeg, Nerfstudio, Python, Nginx) is inside Docker — you do <em>not</em> install it on the host.</p>
+</section>
+
+<!-- ═══════════════════ S2 — DOCKER ═══════════════════ -->
+<section class="section" id="s2">
+  <div class="section-header">
+    <div class="section-num">2</div>
+    <h2>Install Docker &amp; NVIDIA Container Toolkit</h2>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 2.1</div>
+    <h3>Install Docker Engine</h3>
+    <p>Run these commands on your Ubuntu server (copy the whole block):</p>
+    <pre><code># Remove any old Docker versions
+sudo apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+
+# Add Docker's official GPG key and repository
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker Engine + Compose plugin
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io \
+  docker-buildx-plugin docker-compose-plugin</code></pre>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 2.2</div>
+    <h3>Allow your user to run Docker without <code>sudo</code></h3>
+    <pre><code>sudo usermod -aG docker $USER
+# Log out and back in (or run the next line to apply immediately):
+newgrp docker</code></pre>
+    <p>Verify with: <code>docker run hello-world</code></p>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 2.3 — GPU servers only</div>
+    <h3>Install NVIDIA Container Toolkit</h3>
+    <div class="callout warn" style="margin-bottom:12px">
+      <span class="callout-icon">⚠️</span>
+      <div class="callout-body"><p>Skip this step entirely if you have no NVIDIA GPU. The server will use CPU instead (training takes several hours instead of minutes).</p></div>
+    </div>
+    <p>First, make sure the NVIDIA driver is installed:</p>
+    <pre><code>nvidia-smi   # should print your GPU model and driver version</code></pre>
+    <p>Then install the Container Toolkit:</p>
+    <pre><code>curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker</code></pre>
+    <p>Verify:</p>
+    <pre><code>docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi</code></pre>
+    <p>You should see your GPU listed inside the container output.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════ S3 — CLONE ═══════════════════ -->
+<section class="section" id="s3">
+  <div class="section-header">
+    <div class="section-num">3</div>
+    <h2>Clone the Repository</h2>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 3.1</div>
+    <h3>Install Git and clone</h3>
+    <pre><code>sudo apt-get install -y git
+git clone https://github.com/claws02/walkthrough.git ScanCapture
+cd ScanCapture</code></pre>
+  </div>
+
+  <div class="callout info">
+    <span class="callout-icon">📁</span>
+    <div class="callout-body">
+      <p>Your working directory is now <code>~/ScanCapture</code>. All remaining commands in this tutorial assume you are inside this directory.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ S4 — ENV ═══════════════════ -->
+<section class="section" id="s4">
+  <div class="section-header">
+    <div class="section-num">4</div>
+    <h2>Configure the Environment</h2>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 4.1</div>
+    <h3>Create the backend <code>.env</code> file</h3>
+    <pre><code>cp backend/.env.example backend/.env</code></pre>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 4.2</div>
+    <h3>Edit settings (optional but recommended)</h3>
+    <p>Open the file with any editor:</p>
+    <pre><code>nano backend/.env</code></pre>
+    <p>The key settings you may want to change:</p>
+    <table class="hw-table" style="margin-top:8px">
+      <thead><tr><th>Variable</th><th>Default</th><th>When to change</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>NERFSTUDIO_MAX_ITERATIONS</code></td>
+          <td><code>30000</code></td>
+          <td>Lower to <code>7000</code>–<code>15000</code> for faster (lower quality) results. Raise to <code>50000</code> for highest quality.</td>
+        </tr>
+        <tr>
+          <td><code>MAX_UPLOAD_SIZE_MB</code></td>
+          <td><code>1024</code></td>
+          <td>Increase if you upload very long videos (e.g. <code>2048</code> for ~2 GB).</td>
+        </tr>
+        <tr>
+          <td><code>COLMAP_USE_GPU</code></td>
+          <td><code>0</code></td>
+          <td>Set to <code>1</code> if you have an NVIDIA GPU <em>and</em> installed the Container Toolkit above.</td>
+        </tr>
+        <tr>
+          <td><code>COLMAP_GPU_INDEX</code></td>
+          <td><code>0</code></td>
+          <td>Leave at <code>0</code> for single-GPU setups.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>Save and exit: press <strong>Ctrl+O</strong>, then <strong>Enter</strong>, then <strong>Ctrl+X</strong>.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════ S5 — BUILD ═══════════════════ -->
+<section class="section" id="s5">
+  <div class="section-header">
+    <div class="section-num">5</div>
+    <h2>Build &amp; Start the Server</h2>
+  </div>
+
+  <div class="callout warn">
+    <span class="callout-icon">⏱️</span>
+    <div class="callout-body">
+      <p><strong>First-time build takes 20–40 minutes.</strong> Docker downloads and compiles the Nerfstudio + COLMAP images. Subsequent starts are instant — the images are cached.</p>
+    </div>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 5.1</div>
+    <h3>Build all Docker images</h3>
+    <pre><code>cd backend
+docker compose build</code></pre>
+    <p>You will see many lines of output as Docker downloads base images and installs packages. This is normal. Wait for it to finish.</p>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 5.2</div>
+    <h3>Start the server in the background</h3>
+    <pre><code>docker compose up -d</code></pre>
+    <p>The <code>-d</code> flag runs everything as background daemons. You will see four services start:</p>
+    <ul>
+      <li><strong>redis</strong> — job queue</li>
+      <li><strong>api</strong> — FastAPI REST server</li>
+      <li><strong>worker</strong> — Celery worker (runs COLMAP + Nerfstudio)</li>
+      <li><strong>nginx</strong> — reverse proxy, serves the web UI on port 80</li>
+    </ul>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 5.3</div>
+    <h3>Verify everything is running</h3>
+    <pre><code>docker compose ps</code></pre>
+    <p>All four services should show <strong>Up</strong> or <strong>running</strong> status. If any show <strong>Exit</strong>, check the logs (see Section 8).</p>
+    <pre><code># Quick health check:
+curl http://localhost/health</code></pre>
+    <p>Expected response: <code>{"status":"ok"}</code></p>
+  </div>
+
+  <div class="callout success">
+    <span class="callout-icon">✅</span>
+    <div class="callout-body">
+      <p>The server is now running. It will restart automatically after reboots because Docker Compose uses <code>restart: unless-stopped</code> by default.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ S6 — IP ═══════════════════ -->
+<section class="section" id="s6">
+  <div class="section-header">
+    <div class="section-num">6</div>
+    <h2>Find Your Server IP</h2>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 6.1</div>
+    <h3>Get your local network IP</h3>
+    <pre><code>hostname -I | awk '{print $1}'</code></pre>
+    <p>This prints something like <code>192.168.1.42</code>. That is the address you type into your iPhone's browser.</p>
+    <p>Alternatively, run:</p>
+    <pre><code>ip addr show | grep "inet " | grep -v 127.0.0.1</code></pre>
+  </div>
+
+  <div class="callout info">
+    <span class="callout-icon">🌐</span>
+    <div class="callout-body">
+      <p><strong>Cloud VMs:</strong> Use the VM's <em>public</em> IP address instead. Make sure <strong>port 80 (HTTP)</strong> is open in your cloud provider's security group or firewall rules. On AWS: EC2 → Security Groups → Edit Inbound Rules → Add HTTP (port 80) from <code>0.0.0.0/0</code>.</p>
+    </div>
+  </div>
+
+  <div class="callout warn">
+    <span class="callout-icon">🔒</span>
+    <div class="callout-body">
+      <p><strong>No HTTPS by default.</strong> The server uses plain HTTP on port 80. This is fine on a trusted local network. For internet-facing deployments, consider adding a reverse proxy with Let's Encrypt (Certbot + nginx).</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ S7 — IPHONE ═══════════════════ -->
+<section class="section" id="s7">
+  <div class="section-header">
+    <div class="section-num">7</div>
+    <h2>Use the App from Your iPhone</h2>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 7.1</div>
+    <h3>Open the web interface</h3>
+    <p>On your iPhone, open <strong>Safari</strong> and navigate to:</p>
+    <pre><code>http://&lt;YOUR-SERVER-IP&gt;</code></pre>
+    <p>Example: <code>http://192.168.1.42</code></p>
+    <p>You will see the <strong>ScanCapture 3D</strong> upload interface.</p>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 7.2</div>
+    <h3>Record a video on your iPhone</h3>
+    <ul>
+      <li>Use the built-in <strong>Camera</strong> app — regular video mode works.</li>
+      <li>Walk slowly around your subject (object, room, outdoor scene).</li>
+      <li>Keep the subject in frame; overlap each position by ~70%.</li>
+      <li>Aim for <strong>30–120 seconds</strong> of footage. Longer is not always better.</li>
+      <li>Good lighting is the single most important factor — avoid harsh shadows.</li>
+      <li><strong>Supported formats:</strong> MP4, MOV, AVI, MKV, M4V, WebM. iPhone Camera produces <code>.MOV</code> — that works perfectly.</li>
+    </ul>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 7.3</div>
+    <h3>Upload the video</h3>
+    <ol>
+      <li>Tap <strong>"Select File"</strong> in the web interface.</li>
+      <li>Choose <strong>Photo Library</strong> → select your video.</li>
+      <li>Tap <strong>"Upload &amp; Process"</strong>.</li>
+      <li>A progress bar appears. Upload speed depends on your Wi-Fi.</li>
+    </ol>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 7.4</div>
+    <h3>Wait for processing</h3>
+    <p>After upload, the job goes through three stages. You can leave the page — tap <strong>refresh</strong> any time to check status.</p>
+    <table class="hw-table" style="margin-top:8px">
+      <thead><tr><th>Stage</th><th>What happens</th><th>Typical time (GPU)</th><th>CPU only</th></tr></thead>
+      <tbody>
+        <tr><td>Extracting frames</td><td>FFmpeg extracts ~150 frames from your video</td><td>~30 sec</td><td>~30 sec</td></tr>
+        <tr><td>Running COLMAP</td><td>Estimates camera positions from the frames</td><td>2–10 min</td><td>10–30 min</td></tr>
+        <tr><td>Training 3DGS</td><td>Nerfstudio trains the Gaussian Splat model</td><td>15–40 min</td><td>3–8 hours</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Step 7.5</div>
+    <h3>View and download your 3D scene</h3>
+    <p>When the job shows <strong>Done</strong>, two buttons appear:</p>
+    <ul>
+      <li><strong>View 3D</strong> — opens the interactive WebGL viewer directly in Safari. Drag to orbit, pinch to zoom.</li>
+      <li><strong>Download .ply</strong> — saves the point-cloud file to your iPhone for use in other apps.</li>
+    </ul>
+  </div>
+
+  <div class="callout success">
+    <span class="callout-icon">🎉</span>
+    <div class="callout-body">
+      <p>That's it! No app to install, no Xcode, no developer account. Just Safari and your Wi-Fi connection.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ S8 — MANAGE ═══════════════════ -->
+<section class="section" id="s8">
+  <div class="section-header">
+    <div class="section-num">8</div>
+    <h2>Managing the Server (Start / Stop / Logs)</h2>
+  </div>
+
+  <p>All commands run from inside the <code>backend/</code> directory:</p>
+
+  <div class="step-block">
+    <div class="step-label">Start / Stop / Restart</div>
+    <h3></h3>
+    <pre><code># Start (or restart after a reboot)
+docker compose up -d
+
+# Stop all services (preserves data)
+docker compose down
+
+# Restart a single service (e.g. after config change)
+docker compose restart api</code></pre>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">View logs</div>
+    <h3></h3>
+    <pre><code># Live logs from all services (Ctrl+C to stop)
+docker compose logs -f
+
+# Logs from one service only
+docker compose logs -f worker
+docker compose logs -f api
+
+# Last 100 lines, no live follow
+docker compose logs --tail=100 worker</code></pre>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Disk usage &amp; cleanup</div>
+    <h3></h3>
+    <pre><code># How much space are job results using?
+du -sh /var/lib/docker/volumes/backend_scan_data
+
+# Delete a specific job's files (replace JOB_ID):
+# (Find job IDs in the web interface or via the API)
+
+# Remove all stopped containers and dangling images (safe to run):
+docker system prune -f</code></pre>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">Rebuild after a code update</div>
+    <h3></h3>
+    <pre><code>git pull
+docker compose build
+docker compose up -d</code></pre>
+  </div>
+
+  <div class="step-block">
+    <div class="step-label">API reference</div>
+    <h3></h3>
+    <p>The interactive API documentation is available at:</p>
+    <pre><code>http://&lt;YOUR-SERVER-IP&gt;/api/docs</code></pre>
+  </div>
+</section>
+
+<!-- ═══════════════════ S9 — TROUBLESHOOT ═══════════════════ -->
+<section class="section" id="s9">
+  <div class="section-header">
+    <div class="section-num">9</div>
+    <h2>Troubleshooting</h2>
+  </div>
+
+  <p>Click a problem to expand the answer.</p>
+
+  <div class="trouble-item">
+    <div class="trouble-q" onclick="toggle(this)">
+      <span>I can't reach the server from my iPhone (connection refused / timeout)</span>
+      <span class="arrow">›</span>
+    </div>
+    <div class="trouble-a">
+      <p><strong>1. Check all containers are running:</strong></p>
+      <pre><code>cd backend && docker compose ps</code></pre>
+      <p>If nginx is not running, check its logs: <code>docker compose logs nginx</code></p>
+      <p><strong>2. Verify port 80 is listening:</strong></p>
+      <pre><code>ss -tlnp | grep ':80'</code></pre>
+      <p><strong>3. Check the firewall:</strong></p>
+      <pre><code>sudo ufw status
+# If active and port 80 is not listed:
+sudo ufw allow 80/tcp</code></pre>
+      <p><strong>4. Make sure your iPhone is on the same Wi-Fi network as the server.</strong> Or, if using a cloud VM, ensure port 80 is open in the cloud firewall / security group.</p>
+    </div>
+  </div>
+
+  <div class="trouble-item">
+    <div class="trouble-q" onclick="toggle(this)">
+      <span>A container shows "Exit" status or won't start</span>
+      <span class="arrow">›</span>
+    </div>
+    <div class="trouble-a">
+      <p>Check the logs for the failing service:</p>
+      <pre><code>docker compose logs api     # or worker, redis, nginx</code></pre>
+      <p>Common causes:</p>
+      <ul>
+        <li><strong>Port 80 already in use:</strong> Another web server is running. Stop it: <code>sudo systemctl stop apache2 nginx</code></li>
+        <li><strong>Out of disk space:</strong> <code>df -h /</code> — free space if needed.</li>
+        <li><strong>Missing <code>.env</code> file:</strong> <code>cp backend/.env.example backend/.env</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="trouble-item">
+    <div class="trouble-q" onclick="toggle(this)">
+      <span>Upload fails with "413 Request Entity Too Large"</span>
+      <span class="arrow">›</span>
+    </div>
+    <div class="trouble-a">
+      <p>Your video is larger than the configured upload limit. Edit <code>backend/.env</code> and increase:</p>
+      <pre><code>MAX_UPLOAD_SIZE_MB=2048</code></pre>
+      <p>Then restart the API:</p>
+      <pre><code>cd backend && docker compose restart api</code></pre>
+    </div>
+  </div>
+
+  <div class="trouble-item">
+    <div class="trouble-q" onclick="toggle(this)">
+      <span>Job is stuck at "processing" for a very long time</span>
+      <span class="arrow">›</span>
+    </div>
+    <div class="trouble-a">
+      <p>Check what the worker is doing:</p>
+      <pre><code>docker compose logs -f worker</code></pre>
+      <p>Common causes:</p>
+      <ul>
+        <li><strong>COLMAP running on CPU:</strong> This is normal — CPU COLMAP can take 30+ minutes. Check if <code>COLMAP_USE_GPU=1</code> is set (requires NVIDIA Container Toolkit).</li>
+        <li><strong>Training on CPU:</strong> Without a GPU, Nerfstudio training takes hours. This is expected.</li>
+        <li><strong>Worker crashed:</strong> Look for <code>ERROR</code> or <code>Traceback</code> in the logs. Restart with <code>docker compose restart worker</code>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="trouble-item">
+    <div class="trouble-q" onclick="toggle(this)">
+      <span>Job fails with "not enough frames" or "COLMAP failed to reconstruct"</span>
+      <span class="arrow">›</span>
+    </div>
+    <div class="trouble-a">
+      <p>COLMAP needs enough visual overlap between frames to triangulate camera positions.</p>
+      <ul>
+        <li><strong>Move more slowly</strong> when recording — fast movement blurs frames.</li>
+        <li><strong>Overlap more</strong> — each step should cover ~70% of the previous frame.</li>
+        <li><strong>Use better lighting</strong> — dark or flat-lit scenes have few distinguishable features.</li>
+        <li><strong>Avoid reflective or transparent surfaces</strong> — glass, mirrors, and shiny floors confuse COLMAP.</li>
+        <li><strong>Make the video longer</strong> — aim for at least 30 seconds walking around the subject.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="trouble-item">
+    <div class="trouble-q" onclick="toggle(this)">
+      <span>The 3D viewer shows nothing or a black screen</span>
+      <span class="arrow">›</span>
+    </div>
+    <div class="trouble-a">
+      <p>The viewer requires <strong>WebGL 2</strong>, which Safari on iOS 15+ supports.</p>
+      <ul>
+        <li>Make sure your iPhone is running <strong>iOS 15 or later</strong>.</li>
+        <li>Try <strong>reloading the page</strong> — the first load can be slow for large files.</li>
+        <li>If the .ply file is large (200+ MB), it may take 10–30 seconds to parse on mobile. Wait for the loading indicator to disappear.</li>
+        <li>Check the browser console for errors: on iOS, connect to Safari on a Mac and use Web Inspector.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="trouble-item">
+    <div class="trouble-q" onclick="toggle(this)">
+      <span>GPU is not being used even though I have an NVIDIA card</span>
+      <span class="arrow">›</span>
+    </div>
+    <div class="trouble-a">
+      <p>Two things must both be true:</p>
+      <ol>
+        <li>The NVIDIA Container Toolkit is installed and the Docker runtime is configured (Section 2.3).</li>
+        <li><code>COLMAP_USE_GPU=1</code> is set in <code>backend/.env</code>.</li>
+      </ol>
+      <p>Verify GPU is accessible in Docker:</p>
+      <pre><code>docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi</code></pre>
+      <p>After changing <code>.env</code>, restart the worker:</p>
+      <pre><code>cd backend && docker compose restart worker</code></pre>
+    </div>
+  </div>
+
+  <div class="trouble-item">
+    <div class="trouble-q" onclick="toggle(this)">
+      <span>How do I free up disk space from old jobs?</span>
+      <span class="arrow">›</span>
+    </div>
+    <div class="trouble-a">
+      <p>Delete jobs through the web interface (the trash icon next to each job). This calls the API which removes the files and database record.</p>
+      <p>To manually inspect the data volume:</p>
+      <pre><code>docker run --rm -v backend_scan_data:/data alpine ls -lh /data/results/</code></pre>
+      <p>To delete everything and start fresh (destructive!):</p>
+      <pre><code>cd backend
+docker compose down
+docker volume rm backend_scan_data
+docker compose up -d</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ FOOTER ═══════════════════ -->
+<footer>
+  <p>ScanCapture 3D — Server Setup Tutorial</p>
+  <p style="margin-top:6px">For issues and updates, visit the <a href="https://github.com/claws02/walkthrough">project repository</a>.</p>
+</footer>
+
+</div><!-- .page-wrap -->
+
+<script>
+  // Toggle accordion items
+  function toggle(btn) {
+    const ans = btn.nextElementSibling;
+    const isOpen = ans.classList.contains('open');
+    // Close all
+    document.querySelectorAll('.trouble-a').forEach(a => a.classList.remove('open'));
+    document.querySelectorAll('.trouble-q').forEach(b => b.classList.remove('open'));
+    // Open clicked if it was closed
+    if (!isOpen) {
+      ans.classList.add('open');
+      btn.classList.add('open');
+    }
+  }
+
+  // Copy-to-clipboard buttons
+  document.querySelectorAll('pre').forEach(pre => {
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn no-print';
+    btn.textContent = 'Copy';
+    btn.addEventListener('click', () => {
+      const code = pre.querySelector('code');
+      navigator.clipboard.writeText(code ? code.innerText : pre.innerText).then(() => {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1800);
+      });
+    });
+    pre.style.position = 'relative';
+    pre.appendChild(btn);
+  });
+</script>
+</body>
+</html>
