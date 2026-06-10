@@ -131,6 +131,11 @@ def _run(
         )
         images_dir = extract_dir / "images"
         logger.info("[job %s] Extracted %d frames to %s", job_id, frame_count, images_dir)
+        if frame_count < 3:
+            raise RuntimeError(
+                f"Only {frame_count} frames could be extracted from the video; "
+                "need at least 3. Is the video too short?"
+            )
     else:
         # ------------------------------------------------------------------
         # Step 1 – Extract ZIP

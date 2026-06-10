@@ -71,9 +71,6 @@ setup_backend() {
     info "backend/.env already exists, skipping."
   fi
 
-  info "Creating data directories..."
-  mkdir -p data/uploads data/results
-
   # Check for GPU
   if command -v nvidia-smi &>/dev/null; then
     success "NVIDIA GPU detected."
@@ -101,8 +98,8 @@ setup_backend() {
   echo -e "  View logs:"
   echo -e "  ${YELLOW}docker compose logs -f${NC}"
   echo ""
-  echo -e "  API will be available at: ${YELLOW}http://localhost:8000${NC}"
-  echo -e "  API docs:                  ${YELLOW}http://localhost:8000/docs${NC}"
+  echo -e "  Web UI will be available at: ${YELLOW}http://localhost${NC}"
+  echo -e "  API docs:                    ${YELLOW}http://localhost/api/docs${NC}"
   echo ""
 }
 

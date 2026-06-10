@@ -202,7 +202,8 @@ All server settings are in `backend/.env` (copied from `.env.example`):
 | `RESULTS_DIR` | `/data/results` | Where .ply files are stored |
 | `MAX_UPLOAD_SIZE_MB` | `1024` | Max upload file size (supports long videos) |
 | `NERFSTUDIO_MAX_ITERATIONS` | `30000` | Training iterations (quality vs speed) |
-| `COLMAP_GPU_INDEX` | `0` | GPU index for COLMAP, `-1` = all |
+| `COLMAP_USE_GPU` | `0` | Set to `1` only with a CUDA build of COLMAP (the bundled apt package is CPU-only) |
+| `COLMAP_GPU_INDEX` | `0` | GPU index when `COLMAP_USE_GPU=1`, `-1` = all |
 
 **Training quality presets:**
 

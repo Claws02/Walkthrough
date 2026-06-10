@@ -64,18 +64,22 @@ def create_app() -> FastAPI:
             "via COLMAP + Nerfstudio."
         ),
         lifespan=lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        # Docs live under /api/ so they are reachable through the nginx proxy.
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
     )
 
     # ------------------------------------------------------------------
     # CORS
     # ------------------------------------------------------------------
+    # allow_credentials must stay False while origins is a wildcard — browsers
+    # reject "Access-Control-Allow-Origin: *" on credentialed requests, and the
+    # web UI is same-origin through nginx anyway.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )

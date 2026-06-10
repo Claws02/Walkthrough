@@ -22,12 +22,19 @@ All sub-processes are run with ``check=True``; a non-zero exit code raises
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+# GPU SIFT requires a CUDA-enabled COLMAP build (the Ubuntu apt package is
+# CPU-only) and an OpenGL context, which headless containers lack. Default to
+# CPU so the pipeline works out of the box; set COLMAP_USE_GPU=1 only when
+# running a CUDA build of COLMAP.
+_USE_GPU: str = "1" if os.environ.get("COLMAP_USE_GPU", "0") == "1" else "0"
+_GPU_INDEX: str = os.environ.get("COLMAP_GPU_INDEX", "0")
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -85,7 +92,8 @@ def run_colmap(
             "--image_path", str(images_path),
             "--ImageReader.camera_model", "OPENCV",
             "--ImageReader.single_camera", "1",
-            "--SiftExtraction.use_gpu", "1",
+            "--SiftExtraction.use_gpu", _USE_GPU,
+            "--SiftExtraction.gpu_index", _GPU_INDEX,
             "--SiftExtraction.max_image_size", "3200",
             "--SiftExtraction.max_num_features", "8192",
         ],
@@ -101,7 +109,8 @@ def run_colmap(
             "colmap",
             "exhaustive_matcher",
             "--database_path", str(db_path),
-            "--SiftMatching.use_gpu", "1",
+            "--SiftMatching.use_gpu", _USE_GPU,
+            "--SiftMatching.gpu_index", _GPU_INDEX,
         ],
         step="exhaustive_matcher",
     )
@@ -135,11 +144,11 @@ def run_colmap(
     _run(
         [
             "ns-process-data",
-            "colmap",
+            "images",
             "--data", str(images_path),
             "--output-dir", str(ns_data_dir),
-            "--colmap-model-path", str(sparse_model_dir),
             "--skip-colmap",               # we already ran COLMAP ourselves
+            "--colmap-model-path", str(sparse_model_dir),
         ],
         step="ns-process-data",
     )

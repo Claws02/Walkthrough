@@ -183,13 +183,29 @@ final class APIClient {
 
     // MARK: - API Methods
 
-    /// Uploads a ZIP archive to POST /api/jobs — creates the job and starts processing in one step.
-    /// Reports upload progress via `progressHandler` (0.0 – 1.0). Returns the created `Job`.
-    func uploadScan(
+    /// Creates a bare job record via POST /api/jobs (no file).
+    /// The capture ZIP is uploaded afterwards with `uploadCapture(jobId:zipURL:)`.
+    func createJob() async throws -> Job {
+        var request = URLRequest(url: try url("/api/jobs"))
+        request.httpMethod = "POST"
+        // An empty form body — the backend treats a missing `file` field as
+        // a bare job creation.
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data()
+        let (data, response) = try await defaultSession.data(for: request)
+        try checkStatus(response)
+        return try decode(Job.self, from: data)
+    }
+
+    /// Uploads a ZIP archive to POST /api/jobs/{id}/upload and starts processing.
+    /// Reports upload progress via `progressHandler` (0.0 – 1.0). Returns the updated `Job`.
+    @discardableResult
+    func uploadCapture(
+        jobId: String,
         zipURL: URL,
         progressHandler: @escaping (Double) -> Void
     ) async throws -> Job {
-        let endpoint = try url("/api/jobs")
+        let endpoint = try url("/api/jobs/\(jobId)/upload")
 
         let boundary = "ScanCapture-\(UUID().uuidString)"
         var body = Data()

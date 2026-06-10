@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
-    connect_args={"check_same_thread": False},
+    # The Celery worker writes to the same SQLite file from another container;
+    # a generous busy timeout avoids "database is locked" errors.
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
 
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(

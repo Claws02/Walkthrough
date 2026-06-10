@@ -151,7 +151,8 @@ uniform float u_focal;
 
 out vec3 v_color;
 out float v_opacity;
-out vec2 v_uv;
+out vec3 v_conic;   // inverse 2D covariance (a, b, d)
+out vec2 v_d;       // screen-space offset from splat centre (pixels)
 out float v_valid;
 
 // Build rotation matrix from quaternion
@@ -166,7 +167,8 @@ mat3 quatToMat(vec4 q) {
 
 void main() {
   v_valid = 0.0;
-  v_uv = a_position;
+  v_d = vec2(0.0);
+  v_conic = vec3(0.0);
 
   // Sigmoid opacity
   float opacity = 1.0 / (1.0 + exp(-a_opacity));
@@ -187,14 +189,17 @@ void main() {
   vec4 camPos = u_view * vec4(a_center, 1.0);
   if (camPos.z > -0.1) { gl_Position = vec4(0); return; }
 
-  // Jacobian of projection
+  // Jacobian of the perspective projection. GLSL mat3 constructors are
+  // column-major: each triple below is one COLUMN of the matrix, so this
+  // builds  J = [[fx/z, 0, -fx*x/z^2], [0, fy/z, -fy*y/z^2], [0, 0, 0]].
+  // Pixel focal length is identical in x and y for square pixels.
   float fx = u_focal;
-  float fy = u_focal * (u_viewport.x / u_viewport.y);
+  float fy = u_focal;
   float z = camPos.z;
   mat3 J = mat3(
-    fx / z, 0,     -fx * camPos.x / (z*z),
-    0,      fy/z,  -fy * camPos.y / (z*z),
-    0,      0,      0
+    fx / z,                  0.0,                     0.0,
+    0.0,                     fy / z,                  0.0,
+    -fx * camPos.x / (z*z),  -fy * camPos.y / (z*z),  0.0
   );
 
   // Camera rotation part of view matrix
@@ -204,45 +209,36 @@ void main() {
   mat3 JW = J * W;
   mat3 Sigma2D = JW * Sigma3D * transpose(JW);
 
-  // Eigenvalues of 2x2 covariance (top-left)
-  float a = Sigma2D[0][0], b = Sigma2D[0][1], d = Sigma2D[1][1];
+  // Low-pass filter (EWA): ensures each splat covers at least ~1 pixel
+  float a = Sigma2D[0][0] + 0.3;
+  float b = Sigma2D[0][1];
+  float d = Sigma2D[1][1] + 0.3;
+
+  // Eigenvalues of the 2x2 covariance
   float mid = 0.5 * (a + d);
   float disc = sqrt(max(0.001, mid*mid - (a*d - b*b)));
   float l1 = mid + disc, l2 = mid - disc;
 
-  // Splat extent in pixels
-  float r = ceil(3.0 * sqrt(max(l1, l2)));
+  // Splat extent in pixels (clamped to bound fill-rate on huge splats)
+  float r = min(ceil(3.0 * sqrt(max(l1, l2))), 1024.0);
   if (r < 0.5) { gl_Position = vec4(0); return; }
+
+  // Inverse covariance (conic) for the fragment Gaussian evaluation
+  float detSigma = a*d - b*b;
+  if (detSigma <= 0.0) { gl_Position = vec4(0); return; }
+  float invDet = 1.0 / detSigma;
+  v_conic = vec3(d * invDet, -b * invDet, a * invDet);
 
   // Projected center
   vec4 clipPos = u_proj * camPos;
   vec2 ndc = clipPos.xy / clipPos.w;
 
-  // Store cov2D for fragment blending via UV
-  // Encode as 2 params: lambda1, lambda2, angle
-  // For efficiency, we just use UV as [-r,r] offset and evaluate Gaussian there
-
-  // Screen-space offset
+  // Screen-space offset of this quad corner from the splat centre
   vec2 screenOffset = a_position * r;
+  v_d = screenOffset;
   vec2 pixelOffset = screenOffset / (u_viewport * 0.5);
 
   gl_Position = vec4(ndc + pixelOffset, clipPos.z / clipPos.w, 1.0);
-  gl_PointSize = 1.0;
-
-  // Pass inverse covariance for fragment Gaussian evaluation
-  // Pack into UVs using the actual 2D covariance
-  float detSigma = a*d - b*b;
-  if (abs(detSigma) < 1e-6) { gl_Position = vec4(0); return; }
-  float invDet = 1.0 / detSigma;
-  // inv cov: [d, -b; -b, a] / det
-  float invA = d * invDet;
-  float invB = -b * invDet;
-  float invD = a * invDet;
-
-  // Encode screen-space position in UV for fragment to compute Gaussian power
-  // Map screen offset to "Gaussian UV": u = invA*dx + invB*dy, v = invB*dx + invD*dy
-  float dx = screenOffset.x, dy = screenOffset.y;
-  v_uv = vec2(invA * dx + invB * dy, invB * dx + invD * dy);
 
   v_color = a_color;
   v_valid = 1.0;
@@ -254,19 +250,19 @@ const FS = `#version 300 es
 precision mediump float;
 in vec3 v_color;
 in float v_opacity;
-in vec2 v_uv;
+in vec3 v_conic;
+in vec2 v_d;
 in float v_valid;
 out vec4 fragColor;
 
 void main() {
   if (v_valid < 0.5) discard;
-  // 2D Gaussian evaluation: power = -0.5 * (uv dot original_uv)
-  // v_uv already contains inv_cov * screen_offset, original_uv = screen_offset
-  // So power = -0.5 * (invCov * d).dot(d) = -0.5 * v_uv.dot(original_d)
-  // We pass the already-transformed value; evaluate as dot with v_uv
-  float power = -0.5 * dot(v_uv, v_uv);
-  if (power < -4.0) discard;
-  float alpha = v_opacity * exp(power);
+  // 2D Gaussian evaluation: power = -0.5 * d^T * Sigma2D^-1 * d
+  float power = -0.5 * (v_conic.x * v_d.x * v_d.x
+                        + 2.0 * v_conic.y * v_d.x * v_d.y
+                        + v_conic.z * v_d.y * v_d.y);
+  if (power > 0.0) discard;
+  float alpha = min(0.99, v_opacity * exp(power));
   if (alpha < 0.003) discard;
   fragColor = vec4(v_color * alpha, alpha);
 }
@@ -419,7 +415,10 @@ function sortGaussians(centers, viewMatrix) {
   }
   const indices = new Uint32Array(n);
   for (let i = 0; i < n; i++) indices[i] = i;
-  indices.sort((a, b) => depths[a] - depths[b]);
+  // Front-to-back: the ONE_MINUS_DST_ALPHA "under" blend operator requires
+  // the nearest splats first. The camera looks down -Z, so near = larger
+  // (less negative) view-space z.
+  indices.sort((a, b) => depths[b] - depths[a]);
   return indices;
 }
 
@@ -484,13 +483,22 @@ function setupGL(data) {
 }
 
 // ─── Render Loop ──────────────────────────────────────────────────────────────
+let loopStarted = false;
+function startLoop() {
+  if (loopStarted) return;
+  loopStarted = true;
+  render();
+}
+
 function render() {
   animFrameId = requestAnimationFrame(render);
   if (!splatData) return;
 
   resize();
   gl.viewport(0, 0, canvas.width, canvas.height);
-  gl.clearColor(0.04, 0.04, 0.06, 1);
+  // Clear alpha MUST be 0: the under-blend operator scales every incoming
+  // splat by (1 - dstAlpha), so a cleared alpha of 1 would render nothing.
+  gl.clearColor(0.04, 0.04, 0.06, 0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.BLEND);
   gl.blendFuncSeparate(gl.ONE_MINUS_DST_ALPHA, gl.ONE, gl.ONE_MINUS_DST_ALPHA, gl.ONE);
@@ -664,7 +672,7 @@ async function loadFromURL(url) {
     setProgress(1.0);
     hideOverlay();
     showInfo();
-    render();
+    startLoop();
   } catch (err) {
     showError('Failed to load: ' + err.message);
   }
@@ -682,7 +690,7 @@ async function loadFromFile(file) {
     setProgress(1.0);
     hideOverlay();
     showInfo();
-    render();
+    startLoop();
   } catch (err) {
     showError('Failed to parse file: ' + err.message);
   }
@@ -736,7 +744,7 @@ function showError(msg) {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 updateOrbitCamera();
-render();
+startLoop();
 
 // Check URL params
 const params = new URLSearchParams(location.search);

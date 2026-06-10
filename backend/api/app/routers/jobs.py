@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import uuid
 from pathlib import Path
@@ -38,24 +37,37 @@ async def _get_job_or_404(job_id: str, db: AsyncSession) -> Job:
     return job
 
 
+_celery_client = None
+
+
 def _publish_task(job_id: str, upload_path: str) -> None:
-    """Import Celery task lazily to avoid hard dependency at import time."""
-    try:
-        from app.celery_app import celery_app  # worker package  # noqa: F401
+    """Send the processing task to the worker via the Redis broker."""
+    global _celery_client
+    if _celery_client is None:
+        from celery import Celery  # imported lazily to keep startup fast
 
-        celery_app.send_task(
-            "app.tasks.process_scan",
-            args=[job_id, upload_path],
-        )
-    except Exception:
-        # If the Celery import fails (e.g. in the API container where celery_app
-        # is not installed), fall back to sending the task directly via the broker.
-        from celery import Celery  # type: ignore
+        _celery_client = Celery(broker=settings.REDIS_URL, backend=settings.REDIS_URL)
+    _celery_client.send_task(
+        "app.tasks.process_scan",
+        args=[job_id, upload_path],
+    )
 
-        app = Celery(broker=settings.REDIS_URL, backend=settings.REDIS_URL)
-        app.send_task(
-            "app.tasks.process_scan",
-            args=[job_id, upload_path],
+
+_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
+_ZIP_MIMES = {"application/zip", "application/x-zip-compressed", "application/octet-stream"}
+_VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/x-msvideo", "video/webm", "video/x-matroska"}
+
+
+def _validate_upload(file: UploadFile) -> None:
+    """Reject files that are neither ZIP archives nor supported videos."""
+    filename_lower = (file.filename or "").lower()
+    ext = Path(filename_lower).suffix
+    is_zip = filename_lower.endswith(".zip") or file.content_type in _ZIP_MIMES
+    is_video = ext in _VIDEO_EXTS or (file.content_type or "") in _VIDEO_MIMES
+    if not is_zip and not is_video:
+        raise HTTPException(
+            status_code=422,
+            detail="Uploaded file must be a ZIP archive or a video file (.mp4, .mov, etc.).",
         )
 
 
@@ -95,6 +107,7 @@ async def create_job(
 
     if file is not None and file.filename:
         # Inline upload path — same logic as POST /api/jobs/{id}/upload
+        _validate_upload(file)
         upload_job_dir = Path(settings.UPLOAD_DIR) / job_id
         upload_job_dir.mkdir(parents=True, exist_ok=True)
         original_filename = Path(file.filename or "scan.zip").name
@@ -163,18 +176,7 @@ async def upload_scan(
             detail=f"Job {job_id} cannot accept an upload in status '{job.status}'.",
         )
 
-    _video_exts = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
-    _zip_mimes = {"application/zip", "application/x-zip-compressed", "application/octet-stream"}
-    _video_mimes = {"video/mp4", "video/quicktime", "video/x-msvideo", "video/webm", "video/x-matroska"}
-    filename_lower = (file.filename or "").lower()
-    ext = Path(filename_lower).suffix
-    is_zip = filename_lower.endswith(".zip") or file.content_type in _zip_mimes
-    is_video = ext in _video_exts or file.content_type in _video_mimes
-    if not is_zip and not is_video:
-        raise HTTPException(
-            status_code=422,
-            detail="Uploaded file must be a ZIP archive or a video file (.mp4, .mov, etc.).",
-        )
+    _validate_upload(file)
 
     upload_job_dir = Path(settings.UPLOAD_DIR) / job_id
     upload_job_dir.mkdir(parents=True, exist_ok=True)

@@ -113,12 +113,17 @@ def extract_frames(
     update_progress(0.0, f"Extracting frames from {duration:.0f}s video at {fps:.1f} FPS…")
     logger.info("extract_frames: %s  dur=%.1fs fps=%.2f est=%d", video_path.name, duration, fps, est)
 
+    # -progress pipe:1 emits newline-delimited "frame=N" key/value pairs on
+    # stdout; ffmpeg's human-readable stats use \r endings that never stream
+    # through line iteration. -loglevel error keeps stderr small enough that
+    # its pipe buffer cannot fill and deadlock the process.
     cmd = [
-        "ffmpeg", "-y",
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+        "-nostats", "-progress", "pipe:1",
         "-i", str(video_path),
         "-vf", f"fps={fps:.3f},scale=1920:-2:flags=lanczos",
         "-q:v", "2",
-        "-vsync", "vfr",
+        "-vsync", "vfr",  # -fps_mode requires ffmpeg >= 5.1; Ubuntu 22.04 ships 4.4
         str(images_dir / "frame_%04d.jpg"),
     ]
 
@@ -130,12 +135,8 @@ def extract_frames(
     except FileNotFoundError as exc:
         raise RuntimeError("ffmpeg not found — is FFmpeg installed?") from exc
 
-    stderr_lines: list[str] = []
     last_frame = 0
-
-    for line in proc.stderr:  # type: ignore[union-attr]
-        line = line.rstrip()
-        stderr_lines.append(line)
+    for line in proc.stdout:  # type: ignore[union-attr]
         m = _FRAME_RE.search(line)
         if m:
             cur = int(m.group(1))
@@ -144,10 +145,10 @@ def extract_frames(
                 frac = min(cur / est, 1.0)
                 update_progress(0.05 + frac * 0.90, f"Extracting frames… {cur}/{est}")
 
-    proc.wait()
+    _, stderr_text = proc.communicate()
 
     if proc.returncode != 0:
-        tail = "\n".join(stderr_lines[-30:])
+        tail = "\n".join((stderr_text or "").splitlines()[-30:])
         raise RuntimeError(
             f"FFmpeg failed (exit {proc.returncode}).\nLast output:\n{tail}"
         )

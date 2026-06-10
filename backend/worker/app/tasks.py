@@ -29,7 +29,9 @@ _SYNC_DATABASE_URL = DATABASE_URL.replace("+aiosqlite", "")
 
 _engine = create_engine(
     _SYNC_DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    # The API writes to the same SQLite file from another container; a
+    # generous busy timeout avoids "database is locked" errors.
+    connect_args={"check_same_thread": False, "timeout": 30},
     pool_pre_ping=True,
 )
 _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
@@ -114,14 +116,6 @@ def _resolve_job_table() -> type:
 
 # Resolve and cache the real table class once at module level.
 _JobTable = _resolve_job_table()  # type: ignore[misc,assignment]
-
-# Rebuild the session factory so SQLAlchemy knows about _JobTable's metadata.
-_engine = create_engine(
-    _SYNC_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    pool_pre_ping=True,
-)
-_SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
 
 
 # ---------------------------------------------------------------------------

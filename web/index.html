@@ -281,14 +281,14 @@ class App {
     const empty = this.$('empty');
     if(!n){ list.innerHTML=''; empty.style.display='block'; return; }
     empty.style.display='none';
-    list.innerHTML = this.jobs.map(j=>this.card(j)).join('');
+    list.innerHTML = this.jobs.map(j=>this.jobCard(j)).join('');
     list.querySelectorAll('.del-btn').forEach(b =>
       b.addEventListener('click', ()=>{
         if(confirm(`Delete scan ${b.dataset.id.slice(0,8).toUpperCase()}?`)) this.del(b.dataset.id);
       }));
   }
 
-  card(j) {
+  jobCard(j) {
     const pct  = Math.round((j.progress||0)*100);
     const show = j.status==='processing'||(j.status==='pending'&&pct>0);
     const url  = j.status==='completed'&&j.result_url

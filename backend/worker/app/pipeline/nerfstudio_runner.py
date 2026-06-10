@@ -21,6 +21,7 @@ Progress accounting
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import threading
@@ -33,9 +34,9 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# Total training iterations that we request.  Keeping this in sync with the
-# CLI flag below lets us report accurate per-iteration progress.
-_MAX_ITERATIONS: int = 30_000
+# Total training iterations that we request.  Configurable via the
+# NERFSTUDIO_MAX_ITERATIONS environment variable (see backend/.env).
+_MAX_ITERATIONS: int = int(os.environ.get("NERFSTUDIO_MAX_ITERATIONS", "30000"))
 
 # Patterns used to extract the current iteration from Nerfstudio log lines.
 # Nerfstudio 1.x uses a rich-formatted progress bar; the raw text typically
@@ -43,7 +44,7 @@ _MAX_ITERATIONS: int = 30_000
 _ITER_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"[Ss]tep[:\s]+(\d+)\s*/\s*(\d+)"),
     re.compile(r"[Ii]ter(?:ation)?[:\s]+(\d+)"),
-    re.compile(r"\b(\d+)/30000\b"),
+    re.compile(rf"\b(\d+)/{_MAX_ITERATIONS}\b"),
     re.compile(r"\[(\d+)/(\d+)\]"),
 )
 
@@ -97,7 +98,7 @@ def train(
         "--data", str(data_path),
         "--output-dir", str(out_path),
         "--max-num-iterations", str(_MAX_ITERATIONS),
-        "--pipeline.datamanager.camera-optimizer.mode", "off",
+        "--pipeline.model.camera-optimizer.mode", "off",
         "--viewer.quit-on-train-completion", "True",
         "--logging.local-writer.max-log-size", "0",   # suppress file log
     ]

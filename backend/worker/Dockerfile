@@ -77,7 +77,7 @@ RUN pip install --no-cache-dir \
 RUN pip install --no-cache-dir ninja
 
 # Install nerfstudio and its dependencies.
-RUN pip install --no-cache-dir nerfstudio>=1.1.0
+RUN pip install --no-cache-dir "nerfstudio>=1.1.0"
 
 # ---------------------------------------------------------------------------
 # Worker-specific Python requirements
